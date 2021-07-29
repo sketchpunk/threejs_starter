@@ -1,0 +1,25 @@
+<!DOCTYPE html><html><head><title></title></head><body><script type="module">
+
+import Starter, { THREE }       from "../lib/Starter.js";
+import DynamicMesh              from "../lib/DynamicMesh.js";
+let App;
+let DMesh;
+
+window.addEventListener( "load", _=>{
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:false, grid:true } );
+    App.set_camera( 0, 20, 6 ).render();
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    let geo = {
+        vertices : [-1,1,0,  -1,-1,0,  1,-1,0,  1,1,0 ],
+        indices  : [ 0, 1, 2, 2, 3, 0 ],
+    };
+
+    let mat = new THREE.MeshBasicMaterial( { color:0x00ffff, side:THREE.DoubleSide } );
+    DMesh   = new DynamicMesh( mat ).rebuild( geo );
+
+    App.add( DMesh.mesh );
+});
+
+</script></body></html>

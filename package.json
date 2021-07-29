@@ -1,0 +1,29 @@
+{
+    "name"          : "threejs_starter",
+    "version"       : "0.0.0.1",
+    "description"   : "Starter Project for prototyping with Three.js",
+    "keywords"      : [ "threejs", "3d" ],
+    "repository"    : { "url": "https://github.com/sketchpunk/threejs_starter.git", "type": "git" },
+    "author"        : { "name": "Sketchpunk" },
+    "license"       : "MIT",
+    "main"          : "",
+    "module"        : "",
+    "files"         : [],
+
+    "devDependencies": {
+        "concurrently"  : "^6.2.0",
+        "lite-server"   : "^2.6.1"
+    },
+
+    "dependencies": {
+        //"oito"      : "sketchpunk/oito.git",
+        //"proppanel" : "sketchpunk/proppanel.git",
+        "three"     : "0.127.0"
+    },
+
+    "scripts": {
+        "test"      : "echo \"Error: no test specified\" && exit 1",
+        "lite"      : "lite-server",
+        "start"     : "concurrently \"npm:lite\" "
+    }
+}
