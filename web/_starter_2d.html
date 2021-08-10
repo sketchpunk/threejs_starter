@@ -1,0 +1,71 @@
+<!DOCTYPE html><html><head><title></title></head><body><script type="module">
+
+import Starter, { THREE }   from "../lib/Starter.js";
+let App;
+
+window.addEventListener( "load", _=>{
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:false, grid:false, ortho:1, orbit:false } );
+    App.set_camera( 0, 0, 1 ).render();
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Setup Projection with Y
+    const pxFactor = 1;                 // How Big to make a pixel
+    const viewSize = new THREE.Vector2;
+    App.renderer.getSize( viewSize ); // console.log( viewSize )
+    
+    /* AXIS: XZ, ORIGIN: TOP,LEFT,  X: +Right, Z: +Down */
+    App.camera.left             = 0;
+    App.camera.right            = viewSize.x / pxFactor;
+    App.camera.top              = 0;
+    App.camera.bottom           = viewSize.y / pxFactor;
+    App.camera.near             = 500;
+    App.camera.far              = -500;
+    App.camera.updateProjectionMatrix();
+    App.camera.rotation.set( 90 * Math.PI / 180, 0, 0  );
+
+    /* AXIS: XZ, ORIGIN: CENTER,   X: +Right, Z: +Down 
+    App.camera.left             = viewSize.x / -2 / pxFactor;
+    App.camera.right            = viewSize.x / 2 / pxFactor;
+    App.camera.top              = viewSize.y / -2 / pxFactor;
+    App.camera.bottom           = viewSize.y / 2 / pxFactor;
+    App.camera.near             = 500;
+    App.camera.far              = -500;
+    App.camera.updateProjectionMatrix();
+    App.camera.rotation.set( 90 * Math.PI / 180, 0, 0 );
+    */
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // CREATE GRID
+    let cellSize    = 10; // Pixels
+    let cellCount   = Math.floor( Math.max( viewSize.x,viewSize.y) / cellSize );
+    if( (cellCount & 1) == 1 ) cellCount++; // Keep Cell's Even to draw Origin Lines
+    
+    let size        = cellSize * cellCount;
+    let grid        = new THREE.GridHelper( size*2, cellCount*2, 0x0c610c, 0x444444  );
+    App.add( grid );
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // DRAW OBJECTS
+    const SCL = 20;  // Basicly, How Many Pixels Equals 1Unit
+
+    //---------------------------
+    // Render a Plane
+    const geoPlane  = new THREE.PlaneGeometry( 1, 1 );
+    const matPlane  = new THREE.MeshBasicMaterial( {color: 0xff00ff} ); //, side: THREE.DoubleSide 
+    const meshPlane = new THREE.Mesh( geoPlane, matPlane );
+    meshPlane.rotation.set( -Math.PI * 0.5, 0, 0 );
+    meshPlane.position.x = (Math.round( viewSize.x / cellSize ) - 2) * cellSize ;
+    meshPlane.position.z = (Math.round( viewSize.y / cellSize ) - 2) * cellSize ;
+    meshPlane.scale.set( SCL, SCL, SCL );
+    App.add( meshPlane );
+
+    //---------------------------
+    // NonRotated Face Cube Helps Determine The camera's View Angle
+    let cube = Starter.facedCube( [0,0,0], SCL );
+    cube.position.x = cellSize * 2;
+    cube.position.z = cellSize * 2;
+    App.add( cube );
+});
+
+</script></body></html>
