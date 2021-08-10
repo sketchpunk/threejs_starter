@@ -16,6 +16,8 @@
     },
 
     "dependencies": {
+        "oito"      : "sketchpunk/oito.git",
+        "proppanel" : "sketchpunk/proppanel.git",
         "three"     : "0.127.0"
     },
 

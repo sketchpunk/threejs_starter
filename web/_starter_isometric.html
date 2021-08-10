@@ -1,0 +1,21 @@
+<!DOCTYPE html><html><head><title></title></head><body><script type="module">
+
+import Starter, { THREE }   from "../lib/Starter.js";
+
+let App;
+
+window.addEventListener( "load", _=>{
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:false, grid:true, ortho:1 } );
+    App.set_camera( 45, 35.26, 1/8 ).render();
+    /*
+        ISOMETRIC : 
+        camera.rotation.y = Math.PI / 4 					= 0.78539816339 rad = 45 deg
+        camera.rotation.x = Math.atan( 1 / Math.sqrt( 2 ) ) = 0.615479709 rad = 35.2643897016 deg
+    */
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.add( Starter.facedCube( [0,0,0], 2 ) );
+});
+
+</script></body></html>
