@@ -50,14 +50,14 @@ function getGeo(){
 
 function getRawShader(){
     const mat = new THREE.RawShaderMaterial({ 
-		vertexShader	: VERT_SRC, 
-		fragmentShader	: FRAG_SRC, 
-		transparent 	: true,
+        vertexShader	: VERT_SRC, 
+        fragmentShader	: FRAG_SRC, 
+        transparent 	: true,
         side            : THREE.DoubleSide,
-		uniforms 		: {
+        uniforms 		: {
             color   : { value : [0,1,1] },
         } 
-	});
+    });
 
     return mat;
 }
