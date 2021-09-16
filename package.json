@@ -1,6 +1,6 @@
 {
     "name"          : "threejs_starter",
-    "version"       : "0.0.0.1",
+    "version"       : "0.0.0.2",
     "description"   : "Starter Project for prototyping with Three.js",
     "keywords"      : [ "threejs", "3d" ],
     "repository"    : { "url": "https://github.com/sketchpunk/threejs_starter.git", "type": "git" },
@@ -12,7 +12,7 @@
 
     "devDependencies": {
         "concurrently"  : "^6.2.0",
-        "lite-server"   : "^2.6.1"
+        "browser-sync"  : "^2.27.5"
     },
 
     "dependencies": {
@@ -21,7 +21,8 @@
 
     "scripts": {
         "test"      : "echo \"Error: no test specified\" && exit 1",
-        "lite"      : "lite-server",
-        "start"     : "concurrently \"npm:lite\" "
+        "bsyncInit" : "browser-sync init",
+        "bsyncRun"  : "browser-sync start --config bs-config.js",
+        "start"     : "concurrently \"npm:bsyncRun\" "
     }
 }
