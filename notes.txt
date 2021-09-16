@@ -1,0 +1,11 @@
+Latest Version of ThreeJS needs a builder, this example shows how to setup 
+A project with rollup to bundle 
+https://github.com/Mugen87/three-jsm
+
+
+Another Bundler/Server recommendation on how to use ThreeJS
+https://www.snowpack.dev/
+
+
+How to setup a way to use Package Names without a Bundler
+https://dmnsgn.medium.com/in-2020-go-bundler-free-eb29c1f05fc9
