@@ -1,4 +1,4 @@
-// in the future can prob do : <script src="/import-map.js"></script>
+// in the future can prob do : <script type="importmap" src="/import-map.json"></script>
 document.body.appendChild(Object.assign(document.createElement('script'), {
 	type		: 'importmap',
 	innerHTML	: `
@@ -8,3 +8,4 @@ document.body.appendChild(Object.assign(document.createElement('script'), {
 		}}
 	`
 }));
+
