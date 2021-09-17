@@ -1,0 +1,197 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from "../lib/Starter.js";
+
+let App;
+let RTarget;
+let Post;
+
+window.addEventListener( "load", _=>{
+	//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	App = new Starter( { webgl2:true, grid:false } );
+	App.set_camera( 0, 0, 6 );//.render();
+    App.renderer.setClearColor( 0x000000, 0 );
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    //App.add( Starter.facedCube() );
+    RTarget = PickingRenderTarget();
+    Post    = new PostRender( RTarget );
+
+    console.log( "Ratio", window.devicePixelRatio );
+
+    App.add( new THREE.Mesh(
+        new THREE.TorusKnotGeometry( 1, 0.3, 128, 64 ),
+        IdShader(),
+    ) );
+
+    App.renderer.domElement.addEventListener( "click", onClick );
+
+    render();
+});
+
+function PickingRenderTarget(){
+    // Get The Size of the Canvas
+    let size = new THREE.Vector2();
+    App.renderer.getSize( size );
+
+    // 
+    const rt = new THREE.WebGLMultipleRenderTargets( size.x, size.y, 2 );
+    rt.format = THREE.RGBAFormat;
+    rt.type   = THREE.FloatType; //THREE.UnsignedByteType;
+//format: THREE.RGBAFormat,
+//encoding: THREE.LinearEncoding
+
+    rt.texture[ 0 ].name        = 'color';
+    rt.texture[ 0 ].minFilter   = THREE.NearestFilter;
+	rt.texture[ 0 ].magFilter   = THREE.NearestFilter;
+	rt.texture[ 0 ].type        = THREE.FloatType;
+
+    rt.texture[ 1 ].name        = 'id';
+    rt.texture[ 1 ].minFilter   = THREE.NearestFilter;
+	rt.texture[ 1 ].magFilter   = THREE.NearestFilter;
+	rt.texture[ 1 ].type        = THREE.FloatType;
+
+    rt
+    console.log( rt.type, THREE.RGBAFormat );
+    console.log( rt.texture[ 1 ].type );
+
+    rt.depthBuffer         = true;
+    rt.depthTexture        = new THREE.DepthTexture();
+    rt.depthTexture.format = THREE.DepthFormat;
+    rt.depthTexture.type   = THREE.UnsignedShortType;
+
+    return rt;
+}
+
+function render(){
+    //requestAnimationFrame( render );
+
+    // render scene into target
+    App.renderer.setRenderTarget( RTarget );
+    App.renderer.render( App.scene, App.camera );
+
+    Post.render();
+}
+
+function onClick( e ){
+    let canvas  = App.renderer.domElement;
+    let x       = e.clientX;
+    let y       = canvas.clientHeight - 1 - e.clientY; // Invert Y
+
+    var pixelBuffer = new Float32Array( 4 );
+    App.renderer.readRenderTargetPixels( RTarget, x, y, 1, 1, pixelBuffer );
+
+    //let hit_pos = new Float32Array( 4 );
+    //ctx.readBuffer( ctx.COLOR_ATTACHMENT0 );
+    //ctx.readPixels( cx, cy, 1, 1, ctx.RGBA, ctx.FLOAT, hit_pos );
+
+    console.log( x, y, pixelBuffer );
+}
+
+
+class PostRender{
+    static vertSrc = `#version 300 es
+        in vec3 position;
+        in vec2 uv;
+
+        out vec2 vUv;
+        uniform mat4 modelViewMatrix;
+        uniform mat4 projectionMatrix;
+        void main() {
+            vUv         = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+        }`;
+
+    static fragSrc = `#version 300 es
+        precision highp float;
+        precision highp int;
+        layout(location = 0) out vec4 pc_FragColor;
+        in vec2 vUv;
+
+        uniform sampler2D tColor;
+        uniform sampler2D tID;
+
+        void main(){
+            vec3 diffuse        = texture( tColor, vUv ).rgb;
+            vec3 normal         = texture( tID, vUv ).rgb;
+            pc_FragColor.rgb    = mix( diffuse, normal, step( 0.5, vUv.x ) );
+            pc_FragColor.a      = 1.0;
+
+            pc_FragColor.rgb    = diffuse;
+        }
+    `;
+
+    constructor( rt ){
+        this.scene  = new THREE.Scene();
+        this.camera = new THREE.OrthographicCamera( -1, 1, 1, -1, 0, 1 );
+
+        this.scene.add(
+            new THREE.Mesh(
+                new THREE.PlaneGeometry( 2, 2 ),
+                new THREE.RawShaderMaterial({
+                    vertexShader    : PostRender.vertSrc,
+                    fragmentShader  : PostRender.fragSrc,
+                    uniforms        : {
+                        tColor  : { value: rt.texture[ 0 ] },
+                        tID     : { value: rt.texture[ 1 ] },
+                    },
+                })
+            )
+        );
+    }
+
+    render(){
+        App.renderer.setRenderTarget( null );
+        App.renderer.render( this.scene, this.camera );
+    }
+}
+
+function IdShader(){
+    return new THREE.RawShaderMaterial({
+        vertexShader    : `#version 300 es
+            in vec3 position;
+			in vec3 normal;
+			in vec2 uv;
+
+			out vec3 vNormal;
+			out vec2 vUv;
+
+			uniform mat4 modelViewMatrix;
+			uniform mat4 projectionMatrix;
+			uniform mat3 normalMatrix;
+
+			void main() {
+				vUv             = uv;
+				
+				vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );  // get smooth normals
+
+				vNormal         = normalMatrix * normal;
+
+				gl_Position     = projectionMatrix * mvPosition;
+
+			}
+        `,
+        fragmentShader  : `#version 300 es
+            precision highp float;
+			precision highp int;
+
+			layout(location = 0) out vec4 gColor;
+			layout(location = 1) out vec4 gNormal;
+
+			in vec3 vNormal;
+			in vec2 vUv;
+
+			void main() {
+				// write color to G-Buffer
+				gColor = vec4( 12345.0, 0.0, 0.0, 1.0 );
+
+				// write normals to G-Buffer
+				gNormal = vec4( normalize( vNormal ), 0.0 );
+			}
+        `,
+    });
+}
+
+
+// https://github.com/sketchpunk/FunWithWebGL2/blob/master/lesson_093_deferred_lighting/fungi/Fbo.js
+// https://threejs.org/examples/?q=RenderTa#webgl2_multiple_rendertargets
+</script></body></html>

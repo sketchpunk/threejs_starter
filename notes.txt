@@ -9,3 +9,8 @@ https://www.snowpack.dev/
 
 How to setup a way to use Package Names without a Bundler
 https://dmnsgn.medium.com/in-2020-go-bundler-free-eb29c1f05fc9
+
+
+Library to make ImportMaps work easier for multiple browsers
+but must incude library on every page plus doesn't seem to handle loading shared json :/
+https://github.com/guybedford/es-module-shims
