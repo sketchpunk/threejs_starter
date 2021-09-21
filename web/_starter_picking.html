@@ -34,7 +34,7 @@ function PickingRenderTarget(){
     App.renderer.getSize( size );
 
     // 
-    const rt = new THREE.WebGLMultipleRenderTargets( size.x, size.y, 2 );
+    const rt = new THREE.WebGLMultipleRenderTargets( size.x, size.y, 3 );
     rt.format = THREE.RGBAFormat;
     rt.type   = THREE.FloatType; //THREE.UnsignedByteType;
 //format: THREE.RGBAFormat,
@@ -42,17 +42,23 @@ function PickingRenderTarget(){
 
     rt.texture[ 0 ].name        = 'color';
     rt.texture[ 0 ].minFilter   = THREE.NearestFilter;
-	rt.texture[ 0 ].magFilter   = THREE.NearestFilter;
-	rt.texture[ 0 ].type        = THREE.FloatType;
+    rt.texture[ 0 ].magFilter   = THREE.NearestFilter;
+    rt.texture[ 0 ].type        = THREE.FloatType;
 
     rt.texture[ 1 ].name        = 'id';
     rt.texture[ 1 ].minFilter   = THREE.NearestFilter;
-	rt.texture[ 1 ].magFilter   = THREE.NearestFilter;
-	rt.texture[ 1 ].type        = THREE.FloatType;
+    rt.texture[ 1 ].magFilter   = THREE.NearestFilter;
+    rt.texture[ 1 ].type        = THREE.FloatType;
 
-    rt
+    rt.texture[ 2 ].name        = 'uv';
+    rt.texture[ 2 ].minFilter   = THREE.NearestFilter;
+    rt.texture[ 2 ].magFilter   = THREE.NearestFilter;
+    rt.texture[ 2 ].type        = THREE.FloatType;
+    rt.texture[ 2 ].format          = THREE.RGFormat;
+    rt.texture[ 2 ].internalFormat  = "RG16F";
+     
     console.log( rt.type, THREE.RGBAFormat );
-    console.log( rt.texture[ 1 ].type );
+    console.log( rt.texture[ 1 ] );
 
     rt.depthBuffer         = true;
     rt.depthTexture        = new THREE.DepthTexture();
@@ -109,14 +115,18 @@ class PostRender{
 
         uniform sampler2D tColor;
         uniform sampler2D tID;
+        uniform sampler2D tUv;
 
         void main(){
             vec3 diffuse        = texture( tColor, vUv ).rgb;
             vec3 normal         = texture( tID, vUv ).rgb;
+            vec3 uv             = texture( tUv, vUv ).rgb;
             pc_FragColor.rgb    = mix( diffuse, normal, step( 0.5, vUv.x ) );
             pc_FragColor.a      = 1.0;
 
             pc_FragColor.rgb    = diffuse;
+            pc_FragColor.rgb    = normal;
+            pc_FragColor.rgb    = uv;
         }
     `;
 
@@ -133,6 +143,7 @@ class PostRender{
                     uniforms        : {
                         tColor  : { value: rt.texture[ 0 ] },
                         tID     : { value: rt.texture[ 1 ] },
+                        tUv     : { value: rt.texture[ 2 ] },
                     },
                 })
             )
@@ -176,6 +187,7 @@ function IdShader(){
 
 			layout(location = 0) out vec4 gColor;
 			layout(location = 1) out vec4 gNormal;
+            layout(location = 2) out vec2 gUv;
 
 			in vec3 vNormal;
 			in vec2 vUv;
@@ -186,6 +198,8 @@ function IdShader(){
 
 				// write normals to G-Buffer
 				gNormal = vec4( normalize( vNormal ), 0.0 );
+
+                gUv     = vUv;
 			}
         `,
     });
