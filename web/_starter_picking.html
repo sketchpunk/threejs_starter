@@ -205,6 +205,35 @@ function IdShader(){
     });
 }
 
+/*
+https://gamedev.stackexchange.com/questions/88311/how-to-compute-point-in-view-space-from-depth
+
+// Linearizes a Z buffer value
+float CalcLinearZ(float depth) {
+    const float zFar = 100.0;
+    const float zNear = 0.1;
+
+    // bias it from [0, 1] to [-1, 1]
+    float linear = zNear / (zFar - depth * (zFar - zNear)) * zFar;
+
+    return (linear * 2.0) - 1.0;
+}
+
+// this is supposed to get the world position from the depth buffer
+vec3 WorldPosFromDepth(float depth) {
+    float z = depth * 2.0 - 1.0;
+
+    vec4 clipSpacePosition = vec4(TexCoord * 2.0 - 1.0, z, 1.0);
+    vec4 viewSpacePosition = projMatrixInv * clipSpacePosition;
+
+    // Perspective division
+    viewSpacePosition /= viewSpacePosition.w;
+
+    vec4 worldSpacePosition = viewMatrixInv * viewSpacePosition;
+
+    return worldSpacePosition.xyz;
+}
+*/
 
 // https://github.com/sketchpunk/FunWithWebGL2/blob/master/lesson_093_deferred_lighting/fungi/Fbo.js
 // https://threejs.org/examples/?q=RenderTa#webgl2_multiple_rendertargets
