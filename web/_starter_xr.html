@@ -1,0 +1,44 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from "../lib/Starter.js";
+
+import { VRButton } 				from 'webxr/VRButton.js';
+import { XRControllerModelFactory } from 'webxr/XRControllerModelFactory.js';
+
+let App;
+
+// https://threejs.org/docs/#api/en/renderers/webxr/WebXRManager
+// adb reverse tcp:1339 tcp:1339
+window.addEventListener( "load", _=>{
+	//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	App = new Starter( { webgl2:true, grid:true, xr:true } );
+	App.set_camera( 0, 20, 6 ).startXRRender();
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const cube = Starter.facedCube();
+    cube.position.z -= 0.4;
+    cube.scale.set( 0.2, 0.2, 0.2 );
+
+    const geo = new THREE.BufferGeometry().setFromPoints( [ new THREE.Vector3( 0, 0, 0 ), new THREE.Vector3( 0, 0, - 1 ) ] );
+    const line = new THREE.Line( geo );
+    line.name = 'line';
+
+	const controllerModelFactory = new XRControllerModelFactory();
+
+	// Returns a Group representing the so called target ray space of the XR controller. 
+	// Use this space for visualizing 3D objects that support the user in pointing tasks
+	const ctrl_0 = App.renderer.xr.getController( 0 );
+    ctrl_0.add( line );
+	App.add( ctrl_0 );
+
+	// Returns a Group representing the so called grip space of the XR controller. 
+	// Use this space if the user is going to hold other 3D objects like a lightsaber.
+	const grip_0    = App.renderer.xr.getControllerGrip( 0 );
+	const ctrlModel = controllerModelFactory.createControllerModel( grip_0 );
+	grip_0.add( ctrlModel );
+    grip_0.add( cube );
+	App.add( grip_0 );
+
+	document.body.appendChild( VRButton.createButton( App.renderer ) );
+});
+
+</script></body></html>

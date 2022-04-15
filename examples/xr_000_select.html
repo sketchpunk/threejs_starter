@@ -1,0 +1,435 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from "../lib/Starter.js";
+
+import { VRButton } 				from 'webxr/VRButton.js';
+import { XRControllerModelFactory } from 'webxr/XRControllerModelFactory.js';
+
+let App;
+let Ref = {};
+
+// https://github.com/gkjohnson/three-mesh-bvh
+// https://evanw.github.io/csg.js/
+// https://github.com/manthrax/THREE-CSGMesh
+// https://threejs.org/docs/#api/en/renderers/webxr/WebXRManager
+// adb reverse tcp:1339 tcp:1339
+window.addEventListener( "load", _=>{
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:true, grid:true, xr:true } );
+    App.set_camera( 0, 20, 6 ).startXRRender();
+    App.onRender = onRender;
+
+    document.body.appendChild( VRButton.createButton( App.renderer ) );
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const mat  = new THREE.MeshStandardMaterial( { color: 0xa0a0a0 } );
+    const geo  = new THREE.BoxGeometry( 1, 1, 1 );
+    const cube = new THREE.Mesh( geo, mat );
+    cube.position.z = -3;
+    App.add( cube );
+
+    Ref.list = [ cube ];
+    // Ref.modelFactory = new XRControllerModelFactory();
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    Ref.xr     = new XR( App.renderer );
+    Ref.caster = new XRCasterSelector();
+});
+
+function onRender( dt, et, frame, time ){
+    // if( frame ){
+    //     const session = App.renderer.xr.getSession();
+    //     const input   = session.inputSources; // gripSpace targetRaySpace
+    //     const pose    = frame.getViewerPose( App.renderer.xr.getReferenceSpace() );
+    //     // console.log( input );
+    // }
+    
+    if( Ref.xr.update( frame ) ){
+        Ref.caster.update( Ref.xr, Ref.list );
+
+        //console.log( Ref.xr.getController( 'right' ).getAxis() );
+        //console.log( Ref.xr.getController( 'right' ).isButtonPressed( 'b' ) );
+        //console.log( Ref.xr.getController( 'right' ).isButtonTouched( 'b' ) );
+        //console.log( Ref.xr.getController( 'right' ).getButtonValue( 'trigger' ) );
+    }
+
+    // if( Ref.xr.isActive ){
+    //     const ctrl = Ref.xr.getController( 'right' );
+    //     const raycaster = ctrl.getRayCaster();
+    //     const hits  = raycaster.intersectObjects( Ref.list );
+    //     // console.log( hits.length );
+    // }   
+}
+
+// Can auto detect what profile to use from inputSource.profiles[ 0 ]
+// WebXR will give you a list of profile names the controller supports,
+// the first item is the more specific profile name.
+const PROFILES = {
+    'oculus-touch-v3':{
+        hands :{
+            left : {
+                buttons:{
+                    trigge     : { index: 0 },
+                    sqeeze     : { index: 1 },
+                    thumbstick : { index: 3 },
+                    x          : { index: 4 },
+                    y          : { index: 5 },
+                    thumbrest  : { index: 6 },
+                },
+
+                axes : {
+                    x: { index: 2, sign:1, },
+                    y: { index: 3, sign:-1, },
+                }
+            },
+
+            right : {
+                buttons:{
+                    trigger    : { index: 0 },
+                    sqeeze     : { index: 1 },
+                    thumbstick : { index: 3 },
+                    a          : { index: 4 },
+                    b          : { index: 5 },
+                    thumbrest  : { index: 6 },
+                },
+
+                axes : {
+                    x: { index: 2, sign:1,  },
+                    y: { index: 3, sign:-1,  }, // Up is a negative, so invert the value so forward direction is a positive number
+                }
+            }
+        }
+    }
+}
+
+
+class XRController{
+    constructor(){
+        // TODO: Make profiles auto detected.
+        this.profile     = PROFILES[ 'oculus-touch-v3' ]; 
+        
+        this.attachedObj = null;
+        this.raycaster   = new THREE.Raycaster();
+        this.tempMatrix  = new THREE.Matrix4();
+        this.inputSource = null;
+
+        this.group = new THREE.Group();
+        this.mesh  = Starter.facedCube();
+        this.mesh.scale.set( 0.05, 0.05, 0.05 );
+
+        this.line = new THREE.Line( new THREE.BufferGeometry().setFromPoints( [ new THREE.Vector3( 0, 0, 0 ), new THREE.Vector3( 0, 0, - 1 ) ] ) );
+        this.line.scale.z = 0.2;
+
+        //this.group.matrixAutoUpdate = false; // Must disable if manually updating matrix from XR Controller
+        this.group.add( this.mesh );
+        this.group.add( this.line );
+    }
+
+    addToScene( scene ){ scene.add( this.group ); }
+
+    attachObject( obj ){
+        this.group.attach( obj );
+        this.attachedObj        = obj;
+        obj.userData.isAttached = true;
+        obj.material.emissive.b = 1;
+    }
+
+    detachObject(){
+        if( !this.attachedObj ) return;
+
+        this.attachedObj.userData.isAttached = false;
+        this.attachedObj.material.emissive.b = 0;
+
+        App.scene.attach( this.attachedObj );
+        this.attachedObj = null;
+    }
+
+    update( frame, inputSource, refSpace ){
+        //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Save input source to grab button/axis input
+        this.inputSource = inputSource;
+
+        //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Grip Space is the orientation to allow controller models to match up
+        // with with how its helt in a hand.
+
+        // const gripPose = frame.getPose( inputSource.gripSpace, refSpace );
+        // this.group.matrix.fromArray( gripPose.transform.matrix );
+
+        //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Ray Space is the orientation to render objects that is pointing
+        // forward in relation to the hand. Use it for Raycasting origin / direction
+        // or for rendering pointer lines
+        const rayPose  = frame.getPose( inputSource.targetRaySpace, refSpace );
+        // Need to test, if controller is put out of view this will return nothing
+        if( rayPose && rayPose.transform ){
+            // TODO : Use Matrix & Transform, avoid ever decomposing a matrix
+
+            // All examples show copying the the matrix...
+            // this.group.matrix.fromArray( rayPose.transform.matrix );
+            
+            // But after digging into the api, learned that we can
+            // use Postion & Orientation, then dont need to disable
+            // matrix auto updating. Using matrix in this context would
+            // be better since we save time to generate a new matrix in render loop. 
+            this.group.position.copy( rayPose.transform.position );
+            this.group.quaternion.copy( rayPose.transform.orientation );
+        }
+    }
+
+    getRayCaster(){
+        // //this.group.updateWorldMatrix(); // might be needed
+        // this.tempMatrix.identity().extractRotation( this.group.matrix );                // Get controllers WS Rotation
+        // this.raycaster.ray.origin.setFromMatrixPosition( this.group.matrix );           // Set controller's WS Position as origin
+        // this.raycaster.ray.direction.set( 0, 0, -1 ).applyMatrix4( this.tempMatrix );   // Apply WS Rotation to Forward Vector
+
+        // If not using Matrix Updating, then group already hold the information we need without the need to decompose a matrix.
+        this.raycaster.ray.origin.copy( this.group.position );                                  // Set controller's WS Position as origin
+        this.raycaster.ray.direction.set( 0, 0, -1 ).applyQuaternion( this.group.quaternion );  // Apply WS Rotation to Forward Vector
+        
+        /*
+        // If the Controllers are parented to a moving floor, need to compute world space Position & Rotation 
+        // of the controller to get the proper origin and direction for doing a ray cast.
+        const pos = new THREE.Vector3();
+        const rot = new THREE.Quaternion();
+        this.group.getWorldPosition( pos );
+        this.group.getWorldQuaternion( rot );
+
+        this.raycaster.ray.origin.copy( pos );                                // Set controller's WS Position as origin
+        this.raycaster.ray.direction.set( 0, 0, -1 ).applyQuaternion( rot );  // Apply WS Rotation to Forward Vector
+
+        const endPos = [
+            pos.x + this.raycaster.ray.direction.x * 200,
+            pos.y + this.raycaster.ray.direction.y * 200,
+            pos.z + this.raycaster.ray.direction.z * 200,
+        ];
+
+        this.debugLine
+            .reset()
+            .add(
+                this.raycaster.ray.origin.toArray(),
+                endPos,
+                0xff0000,
+            )
+            ._updateGeometry()
+        ;
+        */
+
+        return this.raycaster;
+    }
+
+    // #region INPUT
+
+    getAxis( out=null ){
+        const gamepad = this.inputSource?.gamepad;
+        const side    = this.inputSource?.handedness;
+        out           = out || [ 0,0 ];
+
+        // NOTES: Need to test for gamepad.axis because simulator doesn't provide that info.
+        if( side && gamepad && gamepad.axes && this.profile ){
+            const axes = this.profile.hands[ side ].axes;
+            out[ 0 ]   = gamepad.axes[ axes.x.index ] * axes.x.sign;
+            out[ 1 ]   = gamepad.axes[ axes.y.index ] * axes.y.sign;
+        }
+
+        return out;
+    }
+
+    _getButtonIndex( btnName ){
+        const side = this.inputSource?.handedness;
+        return ( side && this.profile )?
+            this.profile.hands[ side ].buttons[ btnName ].index :
+            null;
+    }
+
+    // Is the button pressed down
+    isButtonPressed( btnName ){
+        const gamepad = this.inputSource?.gamepad;
+        if( gamepad && this.profile ){
+            const btnIdx = this._getButtonIndex( btnName );
+            if( btnIdx != null ) return gamepad.buttons[ btnIdx ].pressed;
+        }
+        return false;
+    }
+
+    // Is the button being touched but not pressed
+    isButtonTouched( btnName ){
+        const gamepad = this.inputSource?.gamepad;
+        if( gamepad && this.profile ){
+            const btnIdx = this._getButtonIndex( btnName );
+            if( btnIdx != null ) return gamepad.buttons[ btnIdx ].touched;
+        }
+        return false;
+    }
+
+    // Get Button value, for trigger & grip value between 0 & 1
+    getButtonValue( btnName ){
+        const gamepad = this.inputSource?.gamepad;
+        if( gamepad && this.profile ){
+            const btnIdx = this._getButtonIndex( btnName );
+            if( btnIdx != null ) return gamepad.buttons[ btnIdx ].value;
+        }
+        return 0;
+    }
+
+    // #endregion
+}
+
+class XR{
+    // #region MAIN
+    isActive    = false;
+    renderer    = null;
+    ctrlMap     = new Map();
+
+    bindSelect       = this._onSelect.bind( this );
+    bindSelectStart  = this._onSelectStart.bind( this );
+    bindSelectEnd    = this._onSelectEnd.bind( this );
+    bindSqueeze      = this._onSqueeze.bind( this );
+    bindSqueezeStart = this._onSqueezeStart.bind( this );
+    bindSqueezeEnd   = this._onSqueezeEnd.bind( this );
+
+    constructor( rend ){
+        this.renderer = rend;
+    }
+    // #endregion
+
+    // #region GETTERS
+    getController( key ){ return this.ctrlMap.get( key ); }
+    // #endregion
+
+    // #region METHODS
+    update( frame ){
+        // Test when XR turns On/Off
+        if( this.renderer.xr.isPresenting && !this.isActive )       this._onXRStart();
+        else  if( !this.renderer.xr.isPresenting && this.isActive ) this._onXREnd();
+
+        if( !this.isActive ) return false;
+
+        const referenceSpace = this.renderer.xr.getReferenceSpace();
+        for( const src of frame.session.inputSources ){
+            if( !src.handedness ) continue;
+
+            const ctrl = this.ctrlMap.get( src.handedness );
+            if( ctrl ) ctrl.update( frame, src, referenceSpace );
+        }
+
+        // Get headset information
+        //const viewPose = frame.getViewerPose( referenceSpace );
+        //console.log( viewPose.transform.position, viewPose.transform.orientation );
+        return true;
+    }
+    // #endregion
+
+    // #region MAIN EVENTS
+    _onXRStart(){
+        console.log( 'XR Start' );
+        this.isActive = true;
+        
+        // SETUP EVENTS LISTENERS
+        const session = this.renderer.xr.getSession();
+        // session.addEventListener( 'end', onSessionEnd );
+        session.addEventListener( 'select', this.bindSelect );
+        session.addEventListener( 'selectstart', this.bindSelectStart );
+        session.addEventListener( 'selectend', this.bindSelectEnd );
+        session.addEventListener( 'squeeze', this.bindSqueeze );
+        session.addEventListener( 'squeezestart', this.bindSqueezeStart );
+        session.addEventListener( 'squeezeend', this.bindSqueezeEnd );
+        session.addEventListener( 'inputsourceschange', e=>{
+            console.log( 'onInputSourceEhange', e ); 
+        });
+
+        // FIND INPUTS
+        const sources = session.inputSources;
+        for( const src of session.inputSources ){
+            if( src.handedness ){
+                console.log( 'Loading Controller: ', src.handedness, src.hand );
+                const ctrl = new XRController();
+                ctrl.addToScene( App );
+                this.ctrlMap.set( src.handedness, ctrl );
+            }
+        }
+    }
+
+    _onXREnd(){
+        console.log( 'XR End' );
+        this.isActive = false;
+
+        const session = this.renderer.xr.getSession();
+        session.removeEventListener( 'select', this.bindSelect );
+        session.removeEventListener( 'selectstart', this.bindSelectStart );
+        session.removeEventListener( 'selectend', this.bindSelectEnd );
+        session.removeEventListener( 'squeeze', this.bindSqueeze );
+        session.removeEventListener( 'squeezestart', this.bindSqueezeStart );
+        session.removeEventListener( 'squeezeend', this.bindSqueezeEnd );
+    }
+    // #endregion
+
+    // #region SESSION - CONTROLLER EVENTS
+    _onSelect( e ){
+        console.log( 'select', e.type, e.inputSource );
+    }
+
+    _onSelectStart( e ){
+        console.log( 'selectstart', e.type, e.inputSource.handedness );
+    }
+
+    _onSelectEnd( e ){
+        console.log( 'selectend', e );
+        
+    }
+
+    _onSqueeze( e ){ console.log( '_onSqueeze', e ); }
+    
+    _onSqueezeStart( e ){
+        console.log( '_onSqueezeStart', e );
+        const ctrl = this.ctrlMap.get( e.inputSource.handedness );
+        const ray  = ctrl.getRayCaster();
+        const hits = ray.intersectObjects( Ref.list );
+
+        if( hits.length > 0 ){
+            ctrl.attachObject( hits[0].object );
+            console.log( hits[0].object );
+        }
+    }
+    
+    _onSqueezeEnd( e ){
+        console.log( '_onSqueezeEnd', e );
+        this.ctrlMap.get( e.inputSource.handedness ).detachObject();
+    }
+    // #endregion
+}
+
+class XRCasterSelector{
+    hoverList = [];
+    constructor(){}
+
+    clearHoverList(){
+        let itm;
+        while( ( itm = this.hoverList.pop()) ){
+            itm.material.emissive.r = 0;
+        }
+    }
+
+    update( xr, list ){
+        this.clearHoverList();
+
+        let ctrl, ray, hits, hit;
+        for( const key of ['left','right'] ){
+            ctrl = xr.getController( key );
+            if( !ctrl || ctrl.attachedObj ) continue;
+
+            ray  = ctrl.getRayCaster();
+            hits = ray.intersectObjects( list );
+
+            for( hit of hits ){
+                let obj = hit.object;
+                if( obj.userData.isAttached === true ) continue;
+
+                obj.material.emissive.r = 1;
+                this.hoverList.push( hit.object );
+            }
+        }
+    }
+}
+
+
+</script></body></html>

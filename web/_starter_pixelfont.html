@@ -1,0 +1,25 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+
+import Starter, { THREE } from "../lib/Starter.js";
+import PixelFontMesh from '../lib/PixelFontMesh.js';
+
+let App;
+
+window.addEventListener( "load", _=>{
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:true, grid:true } );
+    App.set_camera( 0, 0, 2 ).render();
+
+    const mesh = new PixelFontMesh();
+    mesh.setRes( 3, 2 );
+
+    mesh.setPos( 0, 0 );
+    mesh.addText( 'MO', 1 );
+
+    //mesh.setPos( 0, 1 );
+    //mesh.addText( 'Sketchpunk' );
+
+    App.add( mesh );
+});
+
+</script></body></html>
