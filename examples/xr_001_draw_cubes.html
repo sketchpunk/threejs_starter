@@ -1,0 +1,217 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from '../lib/Starter.js';
+import { VRButton }         from 'webxr/VRButton.js';
+import XRManager            from '../lib/xr/XRManager.js';
+import ShapePointsMesh      from '../lib/ShapePointsMesh.js';
+import DynLineMesh          from '../lib/DynLineMesh.js';
+
+import { vec3 }             from 'gl-matrix';
+
+let App;
+let Debug   = {};
+let Ref     = {
+    initHit : [0,0,0],
+    initCtr : [0,0,0],
+    lastHit : [0,0,0],
+};
+
+// adb reverse tcp:1339 tcp:1339
+window.addEventListener( "load", _=>{
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:true, grid:true, xr:true } );
+    App.set_camera( 0, 20, 6 ).startXRRender();
+    App.onRender = onRender;
+
+    App.scene.add( (Debug.pnt = new ShapePointsMesh()) );
+    App.scene.add( (Debug.ln = new DynLineMesh()) );
+    
+    document.body.appendChild( VRButton.createButton( App.renderer ) );
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const mat  = new THREE.MeshStandardMaterial( { color: 0x808080, side:THREE.DoubleSide } );
+    const geo  = new THREE.PlaneGeometry( 4, 4 ); //new THREE.BoxGeometry( 1, 1, 1 );
+    const obj  = new THREE.Mesh( geo, mat );
+    obj.name        = 'Plane';
+    obj.position.y  = 0.05;
+    obj.position.z  = -4;
+    obj.rotation.x  = -Math.PI * 0.5;
+    App.add( obj );
+
+    Ref.list = [ obj ];
+
+    const cGeo = Cube.get();
+    Ref.UnitCube = createMesh( cGeo.vertices, cGeo.indices, cGeo.normals, cGeo.texcoord, new THREE.MeshStandardMaterial( { color: 0xffffff, side:THREE.DoubleSide } ) )
+    //App.add( Ref.UnitCube );
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    Ref.xr     = new XRManager( App.renderer );
+    Ref.xr.init( App.renderer, App.scene );
+});
+
+function onRender( dt, et, frame, time ){
+    if( !Ref.xr.update( frame ) ) return;
+
+    const ctrlRight = Ref.xr.getController( 'right' );
+
+    if( ctrlRight?.isButtonDownThisFrame( 'trigger' ) ){
+        const ray  = ctrlRight.getRayCaster();
+        const hits = ray.intersectObjects( Ref.list, false );        
+        
+        console.log( 'TriggerDown', hits );
+
+        if( hits.length > 0 ){
+            console.log( hits[0].point.toArray() );
+            Debug.pnt.add( hits[0].point.toArray(), 0x00ffff, 3 );
+            Debug.pnt.add( ctrlRight.position, 0x00ff00, 3 );
+            Debug.pnt._updateGeometry();
+
+            vec3.copy( Ref.initHit, hits[0].point.toArray() );
+            vec3.copy( Ref.initCtr, ctrlRight.position );
+        }
+
+    }else if( ctrlRight?.isButtonUpThisFrame( 'trigger' ) ){
+        //const ray  = ctrlRight.getRayCaster();
+        //const hits = ray.intersectObjects( this._groupAssets.children, true );
+        console.log( 'TriggerUp' );
+
+        const min   = vec3.min( [0,0,0], Ref.initHit, Ref.lastHit );
+        const max   = vec3.max( [0,0,0], Ref.initHit, Ref.lastHit );
+        const delta = vec3.sub( [0,0,0], max, min );
+
+        const mesh = Ref.UnitCube.clone();
+        mesh.scale.fromArray( delta );
+        mesh.position.fromArray( min );
+        App.add( mesh );
+        Ref.list.push( mesh );
+
+        Debug.pnt.reset();
+        Debug.ln.reset();
+
+    }else if( ctrlRight?.isButtonPressed( 'trigger' ) ){
+       
+        const delta = vec3.sub( [0,0,0], ctrlRight.position, Ref.initCtr );
+        vec3.scaleAndAdd( Ref.lastHit, Ref.initHit, delta, 10 );
+
+        Debug.ln.reset();
+        Debug.ln.box( Ref.initHit, Ref.lastHit, 0x00ffff );
+        Debug.ln.add( Ref.lastHit, ctrlRight.position, 0xffff00 );
+        Debug.ln._updateGeometry();
+
+        Debug.pnt.reset();
+        Debug.pnt.add( Ref.initHit, 0x00ff00, 2 );
+        Debug.pnt.add( Ref.lastHit, 0xffff00, 2 );
+        Debug.pnt._updateGeometry();
+    }else{
+        ctrlRight?.getRayCaster();
+    }
+}
+
+
+
+
+function createMesh( verts, idx=null, norm=null, uv=null, mat=null, wireFrame=false ){
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const bGeo = new THREE.BufferGeometry();
+    bGeo.setAttribute( "position",  new THREE.BufferAttribute( new Float32Array( verts ), 3 ) );
+
+    if( idx && idx.length > 0 )   bGeo.setIndex( idx );
+    if( norm && norm.length > 0 ) bGeo.setAttribute( "normal",    new THREE.BufferAttribute( new Float32Array( norm ), 3 ) );
+    if( uv && uv.length > 0 )     bGeo.setAttribute( "uv",        new THREE.BufferAttribute( new Float32Array( uv ), 2 ) );
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    mat = mat || new THREE.MeshPhongMaterial( { color:0x009999 } ); // ,side:THREE.DoubleSide
+    const mesh = new THREE.Mesh( bGeo, mat );
+
+    if( wireFrame ){
+        const mat  = new THREE.LineBasicMaterial({ color:0xffffff, opacity:0.6, transparent:true });
+        const wGeo = new THREE.WireframeGeometry( bGeo );
+        const grp  = new THREE.Group();
+        grp.add( mesh );
+        grp.add( new THREE.LineSegments( wGeo, mat ) )
+        return grp;
+    }else{
+        return mesh;
+    }
+}
+
+class Cube{
+    static get( width=1, height=1, depth=1 ){
+        //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // const x1 = width  * 0.5, 
+        //       y1 = height * 0.5, 
+        //       z1 = depth  * 0.5,
+        //       x0 = -x1, 
+        //       y0 = -y1,  
+        //       z0 = -z1;
+
+        const x1 = width, 
+              y1 = height, 
+              z1 = depth,
+              x0 = 0, 
+              y0 = 0,  
+              z0 = 0;
+
+        // Starting bottom left corner, then working counter clockwise to create the front face.
+        // Backface is the first face but in reverse (3,2,1,0)
+        // keep each quad face built the same way to make index and uv easier to assign
+        const vert = [
+            x0, y1, z1, 	//0 Front
+            x0, y0, z1, 	//1
+            x1, y0, z1, 	//2
+            x1, y1, z1, 	//3 
+
+            x1, y1, z0, 	//4 Back
+            x1, y0, z0, 	//5
+            x0, y0, z0, 	//6
+            x0, y1, z0, 	//7 
+
+            x1, y1, z1, 	//3 Right
+            x1, y0, z1, 	//2 
+            x1, y0, z0, 	//5
+            x1, y1, z0, 	//4
+
+            x0, y0, z1, 	//1 Bottom
+            x0, y0, z0, 	//6
+            x1, y0, z0, 	//5
+            x1, y0, z1, 	//2
+
+            x0, y1, z0, 	//7 Left
+            x0, y0, z0, 	//6
+            x0, y0, z1, 	//1
+            x0, y1, z1, 	//0
+
+            x0, y1, z0, 	//7 Top
+            x0, y1, z1, 	//0
+            x1, y1, z1, 	//3
+            x1, y1, z0, 	//4
+        ];
+
+        //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        //Build the index of each quad [0,1,2, 2,3,0]
+        let i;
+        const idx = [];
+        for( i=0; i < vert.length / 3; i+=2) idx.push( i, i+1, ( Math.floor( i / 4 ) * 4 ) + ( ( i + 2 ) % 4 ) );
+
+        //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        //Build UV data for each vertex
+        const uv = [];
+        for( i=0; i < 6; i++) uv.push( 0,0,	 0,1,  1,1,  1,0 );
+
+        //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+        return { 
+            vertices    : vert,
+            indices     : idx,
+            texcoord    : uv, 
+            normals     : [ // Left/Right have their xNormal flipped to render correctly in 3JS, Why does normals need to be mirrored on X?
+                0, 0, 1,	 0, 0, 1,	 0, 0, 1,	 0, 0, 1,		//Front
+                0, 0,-1,	 0, 0,-1,	 0, 0,-1,	 0, 0,-1,		//Back
+                1, 0, 0,	 1, 0, 0,	 1, 0, 0,	 1, 0, 0,		//Left
+                0,-1, 0,	 0,-1, 0,	 0,-1, 0,	 0,-1, 0,		//Bottom
+                -1, 0, 0,	 -1, 0, 0,	 -1, 0, 0,	 -1, 0, 0,		//Right
+                0, 1, 0,	 0, 1, 0,	 0, 1, 0,	 0, 1, 0		//Top
+            ],
+        };
+    }
+}
+</script></body></html>

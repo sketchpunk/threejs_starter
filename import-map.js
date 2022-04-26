@@ -5,6 +5,7 @@ innerHTML	: `
     {"imports":{
         "three"             : "/node_modules/three/build/three.module.js",
         "OrbitControls"	    : "/node_modules/three/examples/jsm/controls/OrbitControls.js",
-        "webxr/"            : "/node_modules/three/examples/jsm/webxr/"
+        "webxr/"            : "/node_modules/three/examples/jsm/webxr/",
+        "gl-matrix"         : "/node_modules/gl-matrix/esm/index.js"
     }}
 `}));
