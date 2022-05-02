@@ -1,0 +1,314 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from '../lib/Starter.js';
+import { VRButton }         from 'webxr/VRButton.js';
+import XRManager            from '../lib/xr/XRManager.js';
+import ShapePointsMesh      from '../lib/ShapePointsMesh.js';
+import DynLineMesh          from '../lib/DynLineMesh.js';
+
+import { GLTFLoader } from 'threejsm/loaders/GLTFLoader.js';
+
+import { vec3, quat }             from 'gl-matrix';
+
+let App;
+let Debug   = {};
+let Ref     = {
+
+};
+
+// adb reverse tcp:1339 tcp:1339
+window.addEventListener( "load", _=>{
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:true, grid:true, xr:true } );
+    App.set_camera( 0, 20, 6 ).startXRRender();
+    App.onRender = onRender;
+
+    App.scene.add( (Debug.pnt = new ShapePointsMesh()) );
+    App.scene.add( (Debug.ln = new DynLineMesh()) );
+    document.body.appendChild( VRButton.createButton( App.renderer ) );
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    /**/
+    const loader = new GLTFLoader();
+    loader.load( '../assets/rivot/rivot_hand_r.gltf', gltf=>{
+        //console.log( gltf.scene );
+        // App.add( gltf.scene );
+        // Ref.handRight = gltf.scene; //gltf.scene.children[ 1 ];
+        // Ref.handRight.scale.set( 0.06, 0.06, 0.06 );
+        // console.log( 'Model', Ref.handRight );
+
+        Ref.handRight = new HandModel( gltf.scene );
+
+        // const skel = Ref.hand.children[ 0 ].skeleton;
+
+        // skel.bones[ 3 ].rotation.x += -Math.PI * 0.15;
+        // skel.bones[ 4 ].rotation.x += -Math.PI * 0.15;
+        // skel.bones[ 5 ].rotation.x += -Math.PI * 0.15;
+
+        // skel.bones[ 8 ].rotation.x += -Math.PI * 0.35;
+        // skel.bones[ 9 ].rotation.x += -Math.PI * 0.35;
+        // skel.bones[ 10 ].rotation.x += -Math.PI * 0.35;
+
+        // skel.bones[ 13 ].rotation.x += -Math.PI * 0.35;
+        // skel.bones[ 14 ].rotation.x += -Math.PI * 0.35;
+        // skel.bones[ 15 ].rotation.x += -Math.PI * 0.35;
+
+        // skel.bones[ 18 ].rotation.x += -Math.PI * 0.35;
+        // skel.bones[ 19 ].rotation.x += -Math.PI * 0.35;
+        // skel.bones[ 20 ].rotation.x += -Math.PI * 0.35;
+
+        // skel.bones[ 22 ].rotation.x += -Math.PI * 0.35;
+        // skel.bones[ 23 ].rotation.x += -Math.PI * 0.35;
+        // skel.bones[ 24 ].rotation.x += -Math.PI * 0.35;
+        // console.log( skel );
+    });
+    
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    Ref.xr     = new XRManager( App.renderer );
+    Ref.xr.init( App.renderer, App.scene );
+    Ref.xr.onLoadHand = ctrl=>{
+        console.log( 'loadhand', ctrl.side );
+
+        if( ctrl.side == 'right' ){
+            ctrl.setHandMesh( Ref.handRight );
+        }
+    };
+});
+
+function onRender( dt, et, frame, time ){
+    if( !Ref.xr.update( frame ) ) return;
+
+    // const ctrlRight = Ref.xr.getController( 'right' );
+
+    // if( ctrlRight?.isButtonDownThisFrame( 'trigger' ) ){
+    //     const ray  = ctrlRight.getRayCaster();
+    //     const hits = ray.intersectObjects( Ref.list, false );        
+        
+    //     console.log( 'TriggerDown', hits );
+
+    //     if( hits.length > 0 ){
+    //         console.log( hits[0].point.toArray() );
+    //         Debug.pnt.add( hits[0].point.toArray(), 0x00ffff, 3 );
+    //         Debug.pnt.add( ctrlRight.position, 0x00ff00, 3 );
+    //         Debug.pnt._updateGeometry();
+
+    //         vec3.copy( Ref.initHit, hits[0].point.toArray() );
+    //         vec3.copy( Ref.initCtr, ctrlRight.position );
+    //     }
+
+    // }else if( ctrlRight?.isButtonUpThisFrame( 'trigger' ) ){
+    //     //const ray  = ctrlRight.getRayCaster();
+    //     //const hits = ray.intersectObjects( this._groupAssets.children, true );
+    //     console.log( 'TriggerUp' );
+
+    //     const min   = vec3.min( [0,0,0], Ref.initHit, Ref.lastHit );
+    //     const max   = vec3.max( [0,0,0], Ref.initHit, Ref.lastHit );
+    //     const delta = vec3.sub( [0,0,0], max, min );
+
+    //     const mesh = Ref.UnitCube.clone();
+    //     mesh.scale.fromArray( delta );
+    //     mesh.position.fromArray( min );
+    //     App.add( mesh );
+    //     Ref.list.push( mesh );
+
+    //     Debug.pnt.reset();
+    //     Debug.ln.reset();
+
+    // }else if( ctrlRight?.isButtonPressed( 'trigger' ) ){
+       
+    //     const delta = vec3.sub( [0,0,0], ctrlRight.position, Ref.initCtr );
+    //     vec3.scaleAndAdd( Ref.lastHit, Ref.initHit, delta, 10 );
+
+    //     Debug.ln.reset();
+    //     Debug.ln.box( Ref.initHit, Ref.lastHit, 0x00ffff );
+    //     Debug.ln.add( Ref.lastHit, ctrlRight.position, 0xffff00 );
+    //     Debug.ln._updateGeometry();
+
+    //     Debug.pnt.reset();
+    //     Debug.pnt.add( Ref.initHit, 0x00ff00, 2 );
+    //     Debug.pnt.add( Ref.lastHit, 0xffff00, 2 );
+    //     Debug.pnt._updateGeometry();
+    // }else{
+    //     ctrlRight?.getRayCaster();
+    // }
+}
+
+class Chain{
+    constructor( ary ){
+        this.bones = [];
+        for( let i of ary ){
+            this.bones.push({
+                ref : i,
+                // pos : i.position.toArray(),
+                rot : i.quaternion.toArray(),
+            });
+        }
+    }
+
+    resetRotation(){
+        for( let b of this.bones ){
+            b.ref.quaternion.fromArray( b.rot );
+        }
+    }
+
+    update( xrChain ){
+        const v       = new THREE.Vector3();
+        const q       = new THREE.Quaternion();
+        const bindDir = [0,0,0];
+        const xrDir   = [0,0,0];
+        const bend    = [0,0,0,1];
+        const pInv    = [0,0,0,1];
+        const wsRot   = [0,0,0,1];
+        let wsbRot;
+        let wsbPos;
+        let prot
+        let b;
+
+        // let b = this.bones[ 0 ].ref.parent;
+        // b.updateWorldMatrix( false, false ); // parents / children
+        // b.getWorldQuaternion( q );
+        
+        // let prot = q.toArray();
+
+        // Debug.pnt.reset();
+        // Debug.ln.reset();
+
+
+        for( let i=0; i < this.bones.length; i++ ){
+            b = this.bones[ i ].ref.parent;
+            b.updateWorldMatrix( true, true ); // parents / children
+            b.getWorldQuaternion( q );
+            prot = q.toArray();
+
+            b = this.bones[ i ].ref;
+            //b.updateWorldMatrix( true, true );
+            b.getWorldPosition( v );
+            b.getWorldQuaternion( q );
+            wsbRot = q.toArray();
+            wsbPos = v.toArray();
+            
+            // if( i==1 ){
+                // Debug.pnt.add( wsbPos, 0xff0000, 1.5 );
+            // }
+
+            // -----------------------------
+            // Swing
+            vec3.transformQuat( bindDir, [0,1, 0], wsbRot );
+            vec3.transformQuat( xrDir,   [0,0,-1], xrChain[ i ].rotation );
+
+            // if( i==1 ) {
+                // Debug.ln.add( wsbPos, vec3.add( [0,0,0], wsbPos, bindDir ), 0xff0000 );
+                // Debug.ln.add( wsbPos, vec3.add( [0,0,0], wsbPos, xrDir ), 0xff0000 );
+            // }
+
+            quat.rotationTo( bend, bindDir, xrDir );
+            quat.mul( wsRot, bend, wsbRot );
+            
+            // -----------------------------
+            // Twist
+            vec3.transformQuat( bindDir, [0,0,1], wsRot );
+            vec3.transformQuat( xrDir,   [0,1,0], xrChain[ i ].rotation );
+
+            // if( i==1 ) {
+                // Debug.ln.add( wsbPos, vec3.add( [0,0,0], wsbPos, bindDir ), 0x00ffff );
+                // Debug.ln.add( wsbPos, vec3.add( [0,0,0], wsbPos, xrDir ), 0xffff00 );
+            // }
+
+            quat.rotationTo( bend, bindDir, xrDir );
+            quat.mul( wsRot, bend, wsRot );
+
+            // -----------------------------
+            // To Local Space
+            quat.invert( pInv, prot );
+            quat.mul( wsRot, pInv, wsRot );
+            b.quaternion.fromArray( wsRot );
+
+            //break;
+        }
+
+        // Debug.pnt._updateGeometry();
+        // Debug.ln._updateGeometry();
+    }
+}
+
+class HandModel{
+    constructor( root, scl=0.06 ){
+        this.root = root;
+        this.skel = root.children[ 1 ].children[ 0 ].skeleton;
+        this.root.scale.set( scl, scl, scl );
+
+        const bones    = this.skel.bones;
+        this.finThumb  = new Chain( [ bones[22], bones[23], bones[24] ] );
+        this.finIndex  = new Chain( [ bones[3],  bones[4],  bones[5] ]  );
+        this.finMiddle = new Chain( [ bones[8],  bones[9],  bones[10] ] );
+        this.finRing   = new Chain( [ bones[13], bones[14], bones[15] ] );
+        this.finPinky  = new Chain( [ bones[18], bones[19], bones[20] ] );
+
+        // skel.bones[ 3 ].rotation.x += -Math.PI * 0.15;
+        // skel.bones[ 4 ].rotation.x += -Math.PI * 0.15;
+        // skel.bones[ 5 ].rotation.x += -Math.PI * 0.15;
+
+        // skel.bones[ 8 ].rotation.x += -Math.PI * 0.35;
+        // skel.bones[ 9 ].rotation.x += -Math.PI * 0.35;
+        // skel.bones[ 10 ].rotation.x += -Math.PI * 0.35;
+
+        // skel.bones[ 13 ].rotation.x += -Math.PI * 0.35;
+        // skel.bones[ 14 ].rotation.x += -Math.PI * 0.35;
+        // skel.bones[ 15 ].rotation.x += -Math.PI * 0.35;
+
+        // skel.bones[ 18 ].rotation.x += -Math.PI * 0.35;
+        // skel.bones[ 19 ].rotation.x += -Math.PI * 0.35;
+        // skel.bones[ 20 ].rotation.x += -Math.PI * 0.35;
+
+        // skel.bones[ 22 ].rotation.x += -Math.PI * 0.35;
+        // skel.bones[ 23 ].rotation.x += -Math.PI * 0.35;
+        // skel.bones[ 24 ].rotation.x += -Math.PI * 0.35;
+        // console.log( skel );
+    }
+
+    // updateRoot( pos, rot ){
+    //     this.root.position.fromArray( pos );
+    //     this.root.quaternion.fromArray( rot );
+    // }
+
+    update( ctrl ){
+        //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Update Main Model first
+        const wrist = ctrl.getJointByName( 'wrist' );
+        this.root.position.fromArray( wrist.position );
+        this.root.quaternion.fromArray( wrist.rotation );
+
+        // reset bones to bind rotation.
+        this.finThumb.resetRotation();
+        this.finIndex.resetRotation();
+        this.finMiddle.resetRotation();
+        this.finRing.resetRotation();
+        this.finPinky.resetRotation();
+
+        //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Debug.pnt.reset();
+
+        // const vpos = new THREE.Vector3();
+        // const b = this.finIndex.bones[ 0 ].ref;
+        // b.updateWorldMatrix( false, false ); // parents/ children
+        
+        // b.getWorldPosition( vpos );
+        // Debug.pnt.add( vpos.toArray(), 0xff0000, 2 );
+        
+        // this.finIndex.bones[ 1 ].ref.getWorldPosition( vpos );
+        // Debug.pnt.add( vpos.toArray(), 0xff0000, 2 );
+
+        // this.finIndex.bones[ 2 ].ref.getWorldPosition( vpos );
+        // Debug.pnt.add( vpos.toArray(), 0xff0000, 2 );
+
+        // Debug.pnt._updateGeometry();
+
+        this.finThumb.update( ctrl.finThumb );
+        this.finIndex.update( ctrl.finIndex );
+        this.finMiddle.update( ctrl.finMiddle );
+        this.finRing.update( ctrl.finRing );
+        this.finPinky.update( ctrl.finPinky );
+    }
+}
+
+
+</script></body></html>
