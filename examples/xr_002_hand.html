@@ -19,7 +19,7 @@ let Ref     = {
 window.addEventListener( "load", _=>{
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     App = new Starter( { webgl2:true, grid:true, xr:true } );
-    App.set_camera( 0, 20, 6 ).startXRRender();
+    App.setCamera( 0, 20, 6 ).startXRRender();
     App.onRender = onRender;
 
     App.scene.add( (Debug.pnt = new ShapePointsMesh()) );

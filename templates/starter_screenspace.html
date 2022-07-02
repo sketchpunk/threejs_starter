@@ -1,12 +1,13 @@
 <!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from '../lib/Starter.js';
+import facedCube            from '../lib/meshes/FacedCube.js';
 
-import Starter, { THREE }   from "../lib/Starter.js";
 let App;
 
 window.addEventListener( "load", _=>{
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     App = new Starter( { webgl2:false, grid:false, ortho:1, orbit:false } );
-    App.set_camera( 0, 0, 1 ).render();
+    App.setCamera( 0, 0, 1 ).render();
 
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // Setup Projection with Y
@@ -61,7 +62,7 @@ window.addEventListener( "load", _=>{
 
     //---------------------------
     // NonRotated Face Cube Helps Determine The camera's View Angle
-    let cube = Starter.facedCube( [0,0,0], SCL );
+    let cube = facedCube( [0,0,0], SCL );
     cube.position.x = cellSize * 2;
     cube.position.z = cellSize * 2;
     App.add( cube );

@@ -1,14 +1,14 @@
 <!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
 
-import Starter, { THREE } from "../lib/Starter.js";
-import PixelFontMesh from '../lib/PixelFontMesh.js';
+import Starter, { THREE } from '../lib/Starter.js';
+import PixelFontMesh      from '../lib/meshes/PixelFontMesh.js';
 
 let App;
 
 window.addEventListener( "load", _=>{
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     App = new Starter( { webgl2:true, grid:true } );
-    App.set_camera( 0, 0, 2 ).render();
+    App.setCamera( 0, 0, 2 ).render();
 
     const mesh = new PixelFontMesh();
     mesh.setRes( 3, 2 );
@@ -16,8 +16,8 @@ window.addEventListener( "load", _=>{
     mesh.setPos( 0, 0 );
     mesh.addText( 'MO', 1 );
 
-    //mesh.setPos( 0, 1 );
-    //mesh.addText( 'Sketchpunk' );
+    mesh.setPos( 0, 1 );
+    mesh.addText( 'Sketchpunk' );
 
     App.add( mesh );
 });

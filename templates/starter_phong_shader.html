@@ -1,13 +1,12 @@
-<!DOCTYPE html><html><head><title></title></head><body><script type="module">
-
-import Starter, { THREE }   from "./lib/starter.js";
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from '../lib/Starter.js';
 
 let App;
 
 window.addEventListener( "load", _=>{
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     App = new Starter( { webgl2:false, grid:true } );
-    App.set_camera( 0, 40, 40 ).render();
+    App.setCamera( 0, 40, 40 ).render();
 
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     //let mat     = new THREE.MeshPhongMaterial( { color: 0x00ffff, shininess:50, specular:0xffffff } );
@@ -23,11 +22,10 @@ window.addEventListener( "load", _=>{
     let geo     = new THREE.TorusKnotGeometry( 10, 3, 100, 16 );    
     let mesh    = new THREE.Mesh( geo, mat );
 
-
     App.add( mesh );
 });
 
-//https://github.com/mrdoob/three.js/blob/d9af9952fc32c2a1281707946177135b90297aab/src/renderers/webgl/WebGLProgram.js#L205
+// https://github.com/mrdoob/three.js/blob/d9af9952fc32c2a1281707946177135b90297aab/src/renderers/webgl/WebGLProgram.js#L205
 function resolveIncludes( src ){
     const includePattern = /^[ \t]*#include +<([\w\d./]+)>/gm;
     return src.replace( includePattern, includeReplacer );

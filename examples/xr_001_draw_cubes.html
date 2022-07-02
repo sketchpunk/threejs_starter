@@ -1,10 +1,10 @@
 <!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
 import Starter, { THREE }   from '../lib/Starter.js';
-import { VRButton }         from 'webxr/VRButton.js';
 import XRManager            from '../lib/xr/XRManager.js';
-import ShapePointsMesh      from '../lib/ShapePointsMesh.js';
-import DynLineMesh          from '../lib/DynLineMesh.js';
+import ShapePointsMesh      from '../lib/meshes/ShapePointsMesh.js';
+import DynLineMesh          from '../lib/meshes/DynLineMesh.js';
 
+import { VRButton }         from 'webxr/VRButton.js';
 import { vec3 }             from 'gl-matrix';
 
 let App;
@@ -19,7 +19,7 @@ let Ref     = {
 window.addEventListener( "load", _=>{
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     App = new Starter( { webgl2:true, grid:true, xr:true } );
-    App.set_camera( 0, 20, 6 ).startXRRender();
+    App.setCamera( 0, 20, 6 ).startXRRender();
     App.onRender = onRender;
 
     App.scene.add( (Debug.pnt = new ShapePointsMesh()) );

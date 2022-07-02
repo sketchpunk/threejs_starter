@@ -1,5 +1,6 @@
 <!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
-import Starter, { THREE }   from "../lib/Starter.js";
+import Starter, { THREE }   from '../lib/Starter.js';
+import facedCube 			from '../lib/meshes/FacedCube.js';
 
 import { VRButton } 				from 'webxr/VRButton.js';
 import { XRControllerModelFactory } from 'webxr/XRControllerModelFactory.js';
@@ -11,10 +12,10 @@ let App;
 window.addEventListener( "load", _=>{
 	//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 	App = new Starter( { webgl2:true, grid:true, xr:true } );
-	App.set_camera( 0, 20, 6 ).startXRRender();
+	App.setCamera( 0, 20, 6 ).startXRRender();
 
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    const cube = Starter.facedCube();
+    const cube = facedCube();
     cube.position.z -= 0.4;
     cube.scale.set( 0.2, 0.2, 0.2 );
 

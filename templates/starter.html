@@ -1,0 +1,15 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from '../lib/Starter.js';
+import facedCube 			from '../lib/meshes/FacedCube.js';
+
+let App;
+
+window.addEventListener( "load", _=>{
+	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	App = new Starter( { webgl2:false, grid:true } );
+	App.setCamera( 45, 20, 6 ).render();
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.add( facedCube() );
+});
+</script></body></html>

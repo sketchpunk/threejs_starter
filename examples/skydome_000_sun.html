@@ -1,0 +1,24 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from '../lib/Starter.js';
+import SkyDomeMaterial      from '../lib/materials/SkyDomeMaterial.js';
+
+let App;
+
+window.addEventListener( "load", _=>{
+	//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	App = new Starter( { webgl2:false, grid:true } );
+	App.setCamera( 0, 10, 6 ).render();
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	const skyMat = SkyDomeMaterial();
+    // Set the position of where to render the sun
+    // skyMat.props.diskLongitude = 180;
+    // skyMat.props.diskLatitude  = 40;
+    // skyMat.props.update();
+
+    const skyDome = new THREE.Mesh( new THREE.SphereGeometry(80, 32, 16), skyMat );
+
+    App.add( skyDome );
+});
+
+</script></body></html>

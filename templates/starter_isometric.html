@@ -1,13 +1,12 @@
 <!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
-
-import Starter, { THREE }   from "../lib/Starter.js";
-
+import Starter, { THREE }   from '../lib/Starter.js';
+import facedCube            from '../lib/meshes/FacedCube.js';
 let App;
 
 window.addEventListener( "load", _=>{
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     App = new Starter( { webgl2:false, grid:true, ortho:1 } );
-    App.set_camera( 45, 35.26, 1/8 ).render();
+    App.setCamera( 45, 35.26, 1/8 ).render();
     /*
         ISOMETRIC : 
         camera.rotation.y = Math.PI / 4 					= 0.78539816339 rad = 45 deg
@@ -15,7 +14,7 @@ window.addEventListener( "load", _=>{
     */
 
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    App.add( Starter.facedCube( [0,0,0], 2 ) );
+    App.add( facedCube( [0,0,0], 2 ) );
 });
 
 </script></body></html>
