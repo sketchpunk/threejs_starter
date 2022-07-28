@@ -14,3 +14,8 @@ https://dmnsgn.medium.com/in-2020-go-bundler-free-eb29c1f05fc9
 Library to make ImportMaps work easier for multiple browsers
 but must incude library on every page plus doesn't seem to handle loading shared json :/
 https://github.com/guybedford/es-module-shims
+
+
+Very cool Toon Shaders
+https://twitter.com/axiom_3d/status/1552637075576557572?s=20&t=-t6gMqLjtH6TvlENxXDJpA
+https://github.com/mayacoda/toon-shader
