@@ -1,22 +1,37 @@
 <!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
 import Starter, { THREE }   from '../lib/Starter.js';
+import ShapePointsMesh      from "../lib/meshes/ShapePointsMesh.js";
 import { UtilGltf2, Gltf2 } from '../lib/loaders/UtilGltf2.js';
 
 let App;
+let Debug = {};
+let Ref   = {
+    target : [ 0.0, 0.5, 1 ],
+};
 
-// https://threejs.org/examples/webgl_materials_envmaps_hdr.html
-// https://polyhaven.com/a/studio_small_08
 window.addEventListener( "load", async _=>{
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    App = new Starter( { webgl2:false, grid:true } );
+    App = new Starter( { webgl2:false, grid:true, lights:false } );
     App.setCamera( 20, 20, 2, [0, 0.5, 0] );
+    App.onRender = onRender;
+
+    App.add( (Debug.pnt = new ShapePointsMesh() ) );
+    Debug.pnt.add( [0,0,0], 0xffffff, 4 );
+    Debug.pnt.position.fromArray( Ref.target );
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Setup scene lights
+    let light = new THREE.DirectionalLight( 0xffffff, 0.3 );
+    light.position.set( 3.0, 3.0, 1.5 );
+    App.add( light );
+
+    Ref.pntLight = new THREE.PointLight( 0xffffff, 1.0, 0, 2 );
+    Ref.pntLight.position.fromArray( Ref.target );
+    App.add( Ref.pntLight );
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     const gltf = await Gltf2.fetch( '../../assets/suzanne/suzanne_hpoly.gltf' );
-    
-    //const mat  = new THREE.MeshPhongMaterial( { color:0x00ffff } );
     const mat  = customMaterial();
-
     const mesh = UtilGltf2.loadMesh( gltf, null, mat );
     mesh.position.y = 0.6;
     
@@ -26,6 +41,20 @@ window.addEventListener( "load", async _=>{
     App.render();
 });
 
+function onRender( dt, et ){
+    const n      = et / 10;
+    const rad    = Math.PI * 2 * n;
+    const radius = 1;
+    const x      = Math.cos( rad );
+    const y      = Math.sin( rad );
+
+    Ref.target[ 0 ] = x * radius;
+    Ref.target[ 2 ] = y * radius;
+    
+    Debug.pnt.position.fromArray( Ref.target );
+    Ref.pntLight.position.fromArray( Ref.target );
+}
+
 // https://gist.github.com/Exomus/4e7dc0d386484257e86a3fedcf3a5766
 function customMaterial(){
     const mat = new THREE.RawShaderMaterial({
@@ -34,12 +63,31 @@ function customMaterial(){
         side            : THREE.DoubleSide,
 
         uniforms        : { 
-            // posCamera     : { type :'vec3', value:[0,0,0] },
+            ambientLightColor     : { type :'vec3', value: new THREE.Color( "#878FA3" ) },
+            diffuse               : { type :'vec3', value: new THREE.Color( "#7F7F7F" ) },
+            opacity               : { type :'float', value: 1.0 },
+            shininess             : { type :'float', value: 32.0 },
+            specular              : { type :'vec3', value: new THREE.Color( "#FFFFFF" ) },
+            directionalLights     : { type :'vec3', value:null },
+            pointLights           : { type :'vec3', value:null },
 
-            // texHeightMap    : { type :'sampler2D', value:texH },
-            // texDiffuse      : { type :'sampler2D', value:texD },
-            // pxPos           : { type :'ivec2', value:[1536,1536] },
-            // pxRng           : { type :'float', value:64 },
+            // Extra stuff isn't used or referenced in the shader, BUT threejs will crash 
+            // if they do not exist when having lights turned on for the material
+			lightProbe              : { type :'vec3', value:null },
+			directionalLightShadows : { type :'vec3', value:null },
+			spotLights              : { type :'vec3', value:null },
+			spotLightShadows        : { type :'vec3', value:null },
+			rectAreaLights          : { type :'vec3', value:null },
+			ltc_1                   : { type :'vec3', value:null },
+			ltc_2                   : { type :'vec3', value:null },
+			pointLightShadows       : { type :'vec3', value:null },
+			hemisphereLights        : { type :'vec3', value:null },
+			directionalShadowMap    : { type :'vec3', value:null },
+			directionalShadowMatrix : { type :'vec3', value:null },
+			spotShadowMap           : { type :'vec3', value:null },
+			spotShadowMatrix        : { type :'vec3', value:null },
+			pointShadowMap          : { type :'vec3', value:null },
+			pointShadowMatrix       : { type :'vec3', value:null },
         },
 
         extensions      : { 
@@ -52,19 +100,24 @@ function customMaterial(){
         in	vec2    uv;
         
         uniform     mat4    modelMatrix;
-         uniform  highp   mat4    viewMatrix;
+        uniform     mat4    viewMatrix;
         uniform     mat4    projectionMatrix;
 
-        out vec3    fragWPos;
+        out vec3    fragVPos;  // View Space Position, THREEJS DOES LIGHTING IN VIEW SPACE
+        out vec3    fragWPos;  // World Space Position
         out vec3    fragNorm;
         out vec2    fragUV;
         
         void main(){
-            vec4 wPos 	        = modelMatrix * vec4( position, 1.0 );
+            vec4 wPos 	        = modelMatrix * vec4( position, 1.0 );  // World Space
+            vec4 vPos           = viewMatrix * wPos;                    // View Space
+            
             fragUV              = uv;
             fragWPos            = wPos.xyz;
+            fragVPos            = vPos.xyz;
             fragNorm            = ( modelMatrix * vec4( normal, 0.0 ) ).xyz;
-            gl_Position			= projectionMatrix * viewMatrix * wPos;
+
+            gl_Position			= projectionMatrix * vPos;
         }`,
 
         fragmentShader  : `#version 300 es
@@ -72,96 +125,209 @@ function customMaterial(){
 
         uniform vec3 cameraPosition;
 
+        in  vec3    fragVPos;
         in  vec3    fragWPos;
         in  vec3    fragNorm;
         in  vec2    fragUV;
         out vec4    outColor;
 
         // #####################################################################
-        // float inverseLerp( float v, float minValue, float maxValue ){
-        //     return (v - minValue) / (maxValue - minValue);
-        // }
+        // THREE.JS LIGHTING - REQUIRED FOR MATERIAL.LIGHTS = TRUE
 
-        // float remap( float v, float inMin, float inMax, float outMin, float outMax ){
-        //     float t = inverseLerp(v, inMin, inMax);
-        //     return mix( outMin, outMax, t );
-        // }
+        uniform vec3  ambientLightColor;
+        uniform vec3  diffuse;
+        uniform float opacity;
+        uniform float shininess;
+        uniform vec3  specular;
+
+        struct IncidentLight {
+            vec3 color;
+            vec3 direction;
+            bool visible;
+        };
+
+        struct Material{
+            vec3 diffuseColor;
+            vec3 specularColor;
+            float specularShininess;
+            float specularStrength;
+        };
+
+        struct ReflectedLight {
+            vec3 directDiffuse;
+            vec3 directSpecular;
+        };
+
+        struct GeometricContext{
+            vec3 position;
+            vec3 normal;
+            vec3 viewDir;
+        };
+
+        float getDistanceAttenuation( const in float lightDistance, const in float cutoffDistance, const in float decayExponent ) {
+            #if defined ( PHYSICALLY_CORRECT_LIGHTS )
+                float distanceFalloff = 1.0 / max( pow( lightDistance, decayExponent ), 0.01 );
+                if ( cutoffDistance > 0.0 ) {
+                    distanceFalloff *= pow2( clamp( 1.0 - pow4( lightDistance / cutoffDistance, 0.0, 1.0 ) ) );
+                }
+                return distanceFalloff;
+            #else
+                if ( cutoffDistance > 0.0 && decayExponent > 0.0 ) {
+                    return pow( clamp( - lightDistance / cutoffDistance + 1.0, 0.0, 1.0 ), decayExponent );
+                }
+                return 1.0;
+            #endif
+        }
+
+        // --------------------------------------
+        #if NUM_DIR_LIGHTS > 0
+            struct DirectionalLight {
+                vec3 direction;
+                vec3 color;
+            };
+            
+            uniform DirectionalLight directionalLights[ NUM_DIR_LIGHTS ];
+            
+            void getDirectionalLightInfo( const in DirectionalLight directionalLight, const in GeometricContext geometry, out IncidentLight light ) {
+                light.color     = directionalLight.color;
+                light.direction = directionalLight.direction;
+                light.visible   = true;
+            }
+        #endif
+
+        // --------------------------------------
+        #if NUM_POINT_LIGHTS > 0
+            struct PointLight {
+                vec3 position;
+                vec3 color;
+                float distance;
+                float decay;
+            };
+                
+            uniform PointLight pointLights[ NUM_POINT_LIGHTS ];
+
+            void getPointLightInfo( const in PointLight pointLight, const in GeometricContext geometry, out IncidentLight light ) {
+                vec3 lVector         = pointLight.position - geometry.position;
+                light.direction      = normalize( lVector );
+                float lightDistance  = length( lVector );
+                light.color          = pointLight.color;
+                light.color         *= getDistanceAttenuation( lightDistance, pointLight.distance, pointLight.decay );
+                light.visible       = ( light.color != vec3( 0.0 ) );
+            }
+        #endif
 
         // #####################################################################
-        void main(){
-            vec3 norm       = normalize( fragNorm );
-            vec3 viewDir    = normalize( cameraPosition - fragWPos );
 
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            // Ambient lighting
-            vec3 ambientLight = vec3( 1.0 );
-
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            // Hemi lighting
-            //float hemiMix       = remap( norm.y, -1.0, 1.0, 0.0, 1.0 );
-            float hemiMix       = norm.y * 0.5 + 0.5; // Remapping the range is simpler by halfing & adding half
-            vec3 skyColour      = vec3( 0.0, 0.3, 0.6 );
-            vec3 groundColour   = vec3( 0.6, 0.3, 0.1 );
-            vec3 hemiLight      = mix( groundColour, skyColour, hemiMix );
-
-            // outColor = vec4( vec3( hemiLight ), 1.0 ); return;
-
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            // Diffuse lighting
-            vec3 lightDir    = normalize( vec3( 1.0, 1.0, 1.0 ) );
-            vec3 lightColour = vec3( 1.0 );
-            float diffuse    = max( 0.0, dot( lightDir, norm ) );
-
-            // outColor = vec4( vec3( diffuse ), 1.0 ); return;
-
+        // THREE TONE TOON LIGHTING
+        void RE_Direct( const in IncidentLight directLight, const in GeometricContext geometry, const in Material material, inout ReflectedLight reflectedLight ) {
             // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             // Three tone toon shading
             // Basically, full shadow when the light and the surface dot product is under 0.33 (step gives 0.0)
             // Smooth partial shadow when dot product is between 0.33 and 0.66 (step gives 0.5 due to the remap)
             // Smooth enlightment when dot product is above 0.66
-
-            //diffuse *= remap( step( 0.33, diffuse ) + step( 0.66, diffuse), 0.0, 2.0, 0.0, 1.0);
-            //diffuse *= ( step( 0.33, diffuse ) + step( 0.66, diffuse) ) * 0.5; // If remapping 2 to 1, just cut in half.
-
-            // smooth out the transition between the tones, basically make it less alias looking
-            float fw = fwidth( diffuse );
-            diffuse *= ( smoothstep( 0.33-fw, 0.33+fw, diffuse ) + smoothstep( 0.66-fw, 0.66+fw, diffuse ) ) * 0.5;
-
-            // outColor = vec4( vec3( diffuse ), 1.0 ); return;
-
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            // Sharper version. The diffuse dot product is equal to 0.0, 0.5 or 1.0 depending on the light angle 
-            vec3 diffuseLight = diffuse * lightColour;
+            
+            float dotNL = max( 0.0, dot( directLight.direction, geometry.normal ) );
+            float fw    = fwidth( dotNL );
+            //dotNL    *= ( step( 0.33, dotNL ) + step( 0.66, dotNL) ) * 0.5; // If remapping 2 to 1, just cut in half.
+            dotNL      *= ( smoothstep( 0.33-fw, 0.33+fw, dotNL ) + smoothstep( 0.66-fw, 0.66+fw, dotNL ) ) * 0.5;  // * 0.5 is to remap 0-2 to 0-1
+            
+            reflectedLight.directDiffuse += dotNL * directLight.color;
 
             // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             // Phong specular
-            vec3 reflectDir = normalize( reflect( -lightDir, norm ) );
-            float specular  = max( 0.0, dot( viewDir, reflectDir ) );
-            specular        = pow( specular, 32.0 );
+            vec3 reflectDir = normalize( reflect( -directLight.direction, geometry.normal ) );
+            float specular  = max( 0.0, dot( geometry.viewDir, reflectDir ) );
+            specular        = pow( specular, material.specularShininess );
+            
+            reflectedLight.directSpecular += material.specularColor * specular * material.specularStrength;
+        }
 
-            // outColor = vec4( vec3( specular ), 1.0 ); return;
+        // Ground and Sky Reflected Light
+        vec3 RE_HemiLight( const in GeometricContext geometry ){
+            float hemiMix       = geometry.normal.y * 0.5 + 0.5;
+            vec3 skyColour      = vec3( 0.0, 0.3, 0.6 );
+            vec3 groundColour   = vec3( 0.6, 0.3, 0.1 );
+            vec3 Light          = mix( groundColour, skyColour, hemiMix );
+            return Light;
+        }
 
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        float RE_HemiRimFresnel( const in GeometricContext geometry ){
             // Hemi rim lighting Fresnel
-            float fresnel = 1.0 -  max( 0.0, dot( viewDir, norm ) );
+            float fresnel = 1.0 -  max( 0.0, dot( geometry.viewDir, geometry.normal ) );
             //fresnel      *= smoothstep( 0.6, 0.61, pow( fresnel, 2.0 ) );
 
             // Add a bit of smoothly
             float fwfresnel = fwidth( fresnel );
             fresnel        *= smoothstep( 0.6-fwfresnel, 0.62+fwfresnel, pow( fresnel, 2.0 ) );
+            return fresnel;
+        }
 
-            // outColor = vec4( vec3( fresnel ), 1.0 ); return;
+        // #####################################################################
+        void main(){
 
-            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            vec3 baseColour = vec3( 0.5 );
-            vec3 lighting   = hemiLight * ( 0.2 + fresnel ) + diffuseLight * 0.8;
-            vec3 colour     = baseColour * lighting + specular;
-            colour          = pow( colour, vec3( 1.0/2.2 ) ); // Gamma correction equivalent to the linearTosRGB
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            // Geometry Related Data
+            GeometricContext geometry;
+            geometry.position           = fragVPos; // MUST USE VIEW SPACE POSITION, 3JS DOES LIGHTING THERE INSTEAD OF WORLD SPACE
+            geometry.normal             = normalize( fragNorm );
+            geometry.viewDir            = normalize( cameraPosition - fragVPos );
 
-            outColor        = vec4( colour, 1.0 );
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            // Material Related Data
+            Material material;
+            material.diffuseColor       = diffuse;
+            material.specularColor      = specular;
+            material.specularShininess  = shininess;
+            material.specularStrength   = 1.0;
+
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            // Execute Direction and Point Lights
+            ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ) );
+            IncidentLight directLight;
+
+            #if ( NUM_DIR_LIGHTS > 0 )
+                DirectionalLight directionalLight;
+
+                #pragma unroll_loop_start
+                for ( int i = 0; i < NUM_DIR_LIGHTS; i ++ ) {
+                    directionalLight = directionalLights[ i ];
+                    getDirectionalLightInfo( directionalLight, geometry, directLight );
+                    RE_Direct( directLight, geometry, material, reflectedLight );
+                }
+                #pragma unroll_loop_end
+            #endif
+
+            #if ( NUM_POINT_LIGHTS > 0 )
+                PointLight pointLight;
+
+                #pragma unroll_loop_start
+                for ( int i = 0; i < NUM_POINT_LIGHTS; i ++ ) {
+                    pointLight = pointLights[ i ];
+                    getPointLightInfo( pointLight, geometry, directLight );
+                    RE_Direct( directLight, geometry, material, reflectedLight );
+                }
+                #pragma unroll_loop_end
+            #endif
+
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            // EXTRA LIGHTS
+            vec3 hemiLight  = RE_HemiLight( geometry );         // Reflective light from Ground and Sky
+            float fresnel   = RE_HemiRimFresnel( geometry );    // Fresnel
+
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            // PUT IT ALL TOGETHER
+            vec3 colour = material.diffuseColor *                                             // Start with a specific color
+                        ( reflectedLight.directDiffuse + hemiLight * ( 0.2 + fresnel ) ) +    // Merging All the Light Models
+                        reflectedLight.directSpecular;                                        // Add Specular on top
+            
+            // Gamma correction equivalent to the linearTosRGB
+            colour      = pow( colour, vec3( 1.0/2.2 ) );
+
+            outColor    = vec4( colour, 1.0 );
         }`
     });
 
+    mat.lights = true;
     return mat;
 }
 
