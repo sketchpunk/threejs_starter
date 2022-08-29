@@ -1,0 +1,168 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+// #region IMPORTS
+import Starter, { THREE }   from '../lib/Starter.js';
+import facedCube 			from '../lib/meshes/FacedCube.js';
+import DynLinesMesh         from '../lib/meshes/DynLineMesh.js';
+import { vec3 }             from 'gl-matrix';
+
+import XRManager            from '../lib/xr2/XRManager.js';
+import XRInputManager       from '../lib/xr2/XRInputManager.js';
+import XRSlideLocomotion    from '../lib/xr2/XRSlideLocomotion.js';
+// #endregion
+
+// #region MAIN
+let App;
+let Debug = {};
+let Ref   = {};
+
+// https://threejs.org/docs/#api/en/renderers/webxr/WebXRManager
+// c:\Program Files\Oculus Developer Hub\resources\bin
+// adb reverse tcp:1339 tcp:1339
+window.addEventListener( "load", _=>{
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:true, grid:true, xr:true } );
+    App.setCamera( 0, 20, 6 );
+    App.onRender = onRender;
+
+    App.add( (Debug.ln  = new DynLinesMesh() ) );
+
+
+    Ref.cube = facedCube();
+    App.add( Ref.cube );
+
+    Ref.xrRoom = new THREE.Group();
+    App.add( Ref.xrRoom );
+
+
+    Ref.xr = new XRManager( App.renderer, App.camera );
+    Ref.xr.on( 'newSession', session=>{
+        console.log( 'New Session Started' );
+        Ref.xr.onSessionEvent( 'select', ()=>{ console.log( 'select' ); } );
+        Ref.xr.onSessionEvent( 'end', ()=>{ console.log( 'end' ); } );
+        Ref.xr.onSessionEvent( 'selectstart', ()=>{ console.log( 'selectstart' ); } );
+        Ref.xr.onSessionEvent( 'selectend', ()=>{ console.log( 'selectend' ); } );
+        Ref.xr.onSessionEvent( 'squeeze', ()=>{ console.log( 'squeeze' ); } );
+        Ref.xr.onSessionEvent( 'squeezestart', ()=>{ console.log( 'squeezestart' ); } );
+        Ref.xr.onSessionEvent( 'squeezeend', ()=>{ console.log( 'squeezeend' ); } );
+        Ref.xr.onSessionEvent( 'inputsourceschange', ()=>{ console.log( 'inputsourceschange' ); } );
+    });
+
+    Ref.xr
+        .on( 'xrStart', e=>{
+            console.log( 'xrStart', e.detail );
+
+            // With how 3JS works, The only easy way to control the location of the VR camera is 
+            // by placing the main camera into another Object3D that can be used for any 
+            // translation & rotation
+            Ref.xrRoom.add( App.camera ); 
+        })
+        .on( 'xrEnd', ()=>console.log( 'xrEnd' ) )
+        .on( 'newHand', onNewHand ) // .on( 'newHand', e=>console.log( 'newHand', e.detail ) )
+        .on( 'newController', onNewController ) //.on( 'newController', e=>console.log( 'newController', e.detail ) )
+    ;
+
+
+    Ref.ipm  = new XRInputManager( Ref.xr );
+    Ref.loco = new XRSlideLocomotion( Ref.xr, Ref.ipm, Ref.xrRoom );
+
+    document.querySelector( '#xrBtn' ).addEventListener( 'click', ()=>{
+        Ref.xr.requestSession();
+    });
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.startXRRender();
+});
+
+function onRender( dt, et, frame, time ){
+    if( frame && Ref.xr.onRender( frame, time ) ){
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        Ref.ipm.update();       // Update all XR Input State
+        Ref.loco.update( dt );  // Execute Locomotion
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Testing XR Position & Direction after Locomotion
+        // Keep cube placed in front of the XR Camera
+        Ref.xr.updateXRCamera();
+        const wpos = Ref.xr.getXRWorldPosition();
+        const wfwd = Ref.xr.getXRWorldForward();
+        vec3.scaleAndAdd( wpos, wpos, wfwd, 10 );
+        Ref.cube.position.fromArray( wpos );
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // RAY CAST TESTING
+        // If VR camera is being placed into another Object3D for controlling placement
+        // then we need to get that object's worldspace transform to properly apply it
+        // to the VR ray space tranforms to get the RAY Information in World Space
+        let ctrl, wRay;
+        const pos = new THREE.Vector3();
+        const rot = new THREE.Quaternion();
+        Ref.xrRoom.getWorldPosition( pos );
+        Ref.xrRoom.getWorldQuaternion( rot );
+
+        Debug.ln.reset();
+
+        ctrl = Ref.ipm.getRightController();
+        if( ctrl ){
+            wRay = ctrl.getWorldSpaceRay( pos.toArray(), rot.toArray() );
+            Debug.ln.add( wRay.pos, vec3.scaleAndAdd( [0,0,0], wRay.pos, wRay.dir, 100 ), 0xff0000 );
+        }
+
+        ctrl = Ref.ipm.getLeftController();
+        if( ctrl ){
+            wRay = ctrl.getWorldSpaceRay( pos.toArray(), rot.toArray() );
+            Debug.ln.add( wRay.pos, vec3.scaleAndAdd( [0,0,0], wRay.pos, wRay.dir, 100 ), 0xff0000 );
+        }
+
+        Debug.ln._updateGeometry();
+    }
+}
+
+// #endregion
+
+// #region LOREM
+function onNewController( e ){
+    const ctrl    = e.detail;
+    ctrl.onUpdate = cbControllerUpdate;
+
+    const cube = facedCube();
+    cube.scale.set( 0.1, 0.1, 0.1 ); 
+    ctrl.customData = { mesh : cube };
+    Ref.xrRoom.add( cube ); //App.add( cube );
+}
+
+function cbControllerUpdate( ctrl ){
+    const mesh = ctrl.customData.mesh;
+    mesh.position.fromArray( ctrl.rayPos );
+    mesh.quaternion.fromArray( ctrl.rayRot );
+}
+
+function onNewHand( e ){
+    const ctrl    = e.detail;
+    ctrl.onUpdate = cbHandUpdate;
+
+    const ary = [];
+    ctrl.customData = { meshes : ary };
+
+    for( let i=0; i < ctrl.jointCount; i++ ){
+        const m = new THREE.AxesHelper( 0.02 );
+        ary.push( m );
+        Ref.xrRoom.add( m ); //App.add( m );
+    }
+}
+
+function cbHandUpdate( ctrl ){
+    const meshes = ctrl.customData.meshes;
+
+    for( let i=0; i < ctrl.jointCount; i++ ){
+        const m = meshes[ i ];
+        const j = ctrl.joints[ i ];
+        m.position.fromArray( j.pos );
+        m.quaternion.fromArray( j.rot );
+    }
+}
+// #endregion
+
+</script>
+<button id="xrBtn" style="position:fixed; left: 10px; top:10px;">RequestSession</button>
+</body></html>
