@@ -1,0 +1,154 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from '../lib/Starter.js';
+import facedCube            from '../lib/meshes/FacedCube.js';
+
+let App;
+let Ref = {};
+
+window.addEventListener( "load", _=>{
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:true, grid:true } );
+    App.setCamera( 45, 20, 6 );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.add( facedCube() );
+
+    Ref.post = postRender();
+    render();
+});
+
+function render(){
+    Ref.post();
+    window.requestAnimationFrame( render );
+}
+
+// https://threejs.org/examples/?q=multisample#webgl2_multisampled_renderbuffers
+// https://threejs.org/examples/?q=frame#webgl_framebuffer_texture
+// https://threejs.org/examples/?q=depth#webgl_depth_texture
+// https://threejs.org/examples/#webgl2_multiple_rendertargets
+// https://raw.githack.com/RenaudRohlinger/three.js/mrt-msaa/examples/index.html#webgl2_multiple_rendertargets_multisampled
+
+
+function postRender( target ){
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const scene  = new THREE.Scene();
+    const camera = new THREE.OrthographicCamera( -1, 1, 1, -1, 0, 1 );
+    const fbo    = fboColorDepth();
+
+    //const tex    = fbo.texture[ 0 ];
+    const tex    = fbo.depthTexture;
+    const isDepth = 1;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Giant Device Space Triangle
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute( 'position', new THREE.BufferAttribute( new Float32Array([ -1.0, -1.0, 3.0, -1.0, -1.0, 3.0 ]), 2 ) );
+    geo.setAttribute( 'uv', new THREE.BufferAttribute( new Float32Array([0, 0, 2, 0, 0, 2]), 2 ) );
+
+    const mesh = new THREE.Mesh( geo, postMaterial( tex, isDepth ) );
+    mesh.frustumCulled = false;
+
+    scene.add( mesh );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    return ()=>{
+        App.renderer.setRenderTarget( fbo );
+        App.renderer.render( App.scene, App.camera );
+
+        App.renderer.setRenderTarget( null );
+        App.renderer.render( scene, camera );
+    };
+}
+
+function postMaterial( tex, isDepth=0 ){
+    return new THREE.RawShaderMaterial({
+        depthTest       : true,
+        transparent 	: false,
+        alphaToCoverage : false,
+        side            : THREE.DoubleSide,
+        uniforms        : { 
+            tex : { type:'sampler2D', value: tex },
+            isDepth : { type:'int', value: isDepth, }
+        },
+    
+        vertexShader    : `#version 300 es
+        in vec2 position;
+		in vec2 uv;
+
+        uniform     mat4    viewMatrix;
+        uniform     mat4    projectionMatrix;
+
+        out vec2 fragUV;
+
+        void main(){            
+            fragUV      = uv;
+            gl_Position = projectionMatrix * viewMatrix * vec4( position, 0.0, 1.0 );
+        }`,
+
+        fragmentShader  : `#version 300 es
+        precision mediump float;
+        
+        uniform sampler2D tex;
+        uniform int       isDepth;
+        
+        in   vec2 fragUV;
+        out  vec4 outColor;
+
+        // float readDepth( sampler2D depthSampler, vec2 coord ) {
+        //         float fragCoordZ = texture2D( depthSampler, coord ).x;
+        //         float viewZ      = perspectiveDepthToViewZ( fragCoordZ, cameraNear, cameraFar );
+        //         return viewZToOrthographicDepth( viewZ, cameraNear, cameraFar );
+        // }
+
+        float perspectiveDepthToViewZ( const in float invClipZ, const in float near, const in float far ) {
+            return ( near * far ) / ( ( far - near ) * invClipZ - far );
+        }
+
+        float viewZToOrthographicDepth( const in float viewZ, const in float near, const in float far ) {
+            return ( viewZ + near ) / ( near - far );
+        }
+
+        void main(){
+            vec4 color = texture( tex, fragUV );
+            outColor   = color; //vec4( 1.0, 0.0, 0.0, 1.0 );
+            
+            if( isDepth == 1 ){
+                float near   = 0.01;
+                float far    = 10.0;
+                float viewZ  = perspectiveDepthToViewZ( color.x, near, far );
+                float orthoZ = viewZToOrthographicDepth( viewZ, near, far );
+                outColor.rgb = vec3( orthoZ );
+            }
+        }`,
+    });
+}
+
+function fboColorDepth(){
+    const size = App.getRendererSize();
+    const dpr  = window.devicePixelRatio;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const fbo  = new THREE.WebGLMultipleRenderTargets(
+        size[ 0 ] * dpr,
+        size[ 1 ] * dpr,
+        1,
+        { depthBuffer : true }
+    );
+
+    fbo.depthTexture = new THREE.DepthTexture(
+        size[ 0 ] * dpr,
+        size[ 1 ] * dpr,
+        THREE.UnsignedShortType,
+        THREE.UVMapping,
+    );;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const tex     = fbo.texture[ 0 ];
+    tex.name      = 'color';
+    tex.minFilter = THREE.NearestFilter;
+    tex.magFilter = THREE.NearestFilter;
+
+    return fbo;
+}
+
+</script></body></html>

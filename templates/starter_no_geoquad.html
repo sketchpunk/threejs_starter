@@ -1,0 +1,73 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from '../lib/Starter.js';
+import facedCube            from '../lib/meshes/FacedCube.js';
+
+let App;
+
+window.addEventListener( "load", _=>{
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:true, grid:true } );
+    App.setCamera( 45, 20, 6 ).render();
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute( 'position', 
+        new THREE.BufferAttribute( new Float32Array( [0,0,0,0,0,0] ), 1 )
+    );
+
+    //geo.addGroup( 0, 6, 0 );
+    //geo.setDrawRange( 0, 6 );
+
+
+    const mesh = new THREE.Mesh( geo, customMaterial() );
+    mesh.frustumCulled = false;
+
+
+    App.add( mesh );
+});
+
+function customMaterial(){
+    return new THREE.RawShaderMaterial({
+        depthTest       : true,
+        transparent 	: false,
+        alphaToCoverage : false,
+        side            : THREE.DoubleSide,
+        uniforms        : { 
+            //u_scale:{ value : 20.0 },
+        },
+    
+        vertexShader    : `#version 300 es
+        const vec3 QUAD[ 6 ] = vec3[] (
+            vec3( 1.0,  1.0, 0.0 ), vec3(-1.0, -1.0, 0.0 ), vec3(-1.0,  1.0, 0.0 ),
+            vec3(-1.0, -1.0, 0.0 ), vec3( 1.0,  1.0, 0.0 ), vec3( 1.0, -1.0, 0.0 )
+        );
+        const vec2 QUAD_UV[ 6 ] = vec2[] (
+            vec2( 1.0, 0.0 ), vec2( 0.0, 1.0 ), vec2( 0.0, 0.0 ),
+            vec2( 0.0, 1.0 ), vec2( 1.0, 0.0 ), vec2( 1.0, 1.0 )
+        );
+
+        // const vec3 TRI[ 3 ] = vec3[] (
+        //     vec3( -1.0, -1.0, 0.0 ), vec3( 3.0, -1.0, 0.0 ), vec3( -1.0, 3.0, 0.0 )
+        // );
+        // const vec2 TRI_UV[ 3 ] = vec2[] (
+        //     vec2( 0.0, 0.0 ), vec2( 2.0, 0.0 ), vec2( 0.0, 2.0 )
+        // );
+
+        uniform     mat4    modelMatrix;
+        uniform     mat4    viewMatrix;
+        uniform     mat4    projectionMatrix;
+
+        void main(){
+            vec4 wPos   = modelMatrix * vec4( QUAD[ gl_VertexID ], 1.0 );
+            gl_Position = projectionMatrix * viewMatrix *  wPos;
+        }`,
+
+        fragmentShader  : `#version 300 es
+        precision mediump float;
+        out  vec4 outColor;
+        void main(){
+            outColor = vec4( 1.0, 0.0, 0.0, 1.0 );
+        }`,
+    });
+}
+
+</script></body></html>
