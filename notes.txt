@@ -19,3 +19,10 @@ https://github.com/guybedford/es-module-shims
 Very cool Toon Shaders
 https://twitter.com/axiom_3d/status/1552637075576557572?s=20&t=-t6gMqLjtH6TvlENxXDJpA
 https://github.com/mayacoda/toon-shader
+
+
+Paralax Mapping & Parallax Interior Cubemaps
+https://www.youtube.com/watch?v=eX7x1mJrQJs
+https://www.habrador.com/tutorials/shaders/2-interior-mapping/
+https://halisavakis.com/my-take-on-shaders-interior-mapping/
+https://seblagarde.wordpress.com/2012/09/29/image-based-lighting-approaches-and-parallax-corrected-cubemap/

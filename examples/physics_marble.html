@@ -1,0 +1,63 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }  from '../lib/Starter.js';
+import ShapePointsMesh     from "../lib/meshes/ShapePointsMesh.js";
+import DynLinesMesh        from "../lib/meshes/DynLineMesh.js";
+import { UtilGltf2, Gltf2 } from '../lib/loaders/UtilGltf2.js';
+import { vec3 }             from '../lib/gl-matrix/index.js';
+
+let App;
+let Debug = {};
+
+window.addEventListener( 'load', async _=>{
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:false, grid:true } );
+    App.setCamera( 45, 20, 7, [0,1,0]).render();
+
+    App.add( (Debug.pnt = new ShapePointsMesh() ) );
+    App.add( (Debug.ln  = new DynLinesMesh() ) );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const gltf = await Gltf2.fetch( '../../assets/marble_kit.gltf' );
+    const mesh = UtilGltf2.loadMesh( gltf, 'slant_solid_long_C', new THREE.MeshPhongMaterial() );
+
+    App.add( mesh );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const pos = [0,2.5,-0.5];
+    const dir = [0,-1,0];
+
+    Debug.pnt.add( pos, 0x00ffff, 3 );
+    Debug.ln.add( pos, vec3.scaleAndAdd([0,0,0], pos, dir, 2 ), 0x00ffff, null, true );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const vPos      = new THREE.Vector3().fromArray( pos );
+    const vDir      = new THREE.Vector3().fromArray( dir );
+    const ray       = new THREE.Raycaster( vPos, vDir );
+    const hit       = ray.intersectObject( mesh )[ 0 ];
+
+    const hitPos    = hit.point.toArray();
+    const hitNorm   = hit.face.normal.toArray();
+
+    Debug.pnt.add( hitPos, 0x00aaaa, 7, 6 );
+    Debug.ln.add( hitPos, vec3.scaleAndAdd([0,0,0], hitPos, hitNorm, 2 ), 0xff0000 );
+
+    // Get the opposite direction of the ray;
+    const invDir  = vec3.negate( [0,0,0], dir ); 
+    
+    // Find rotation axis for angular rotation
+    const rotAxis = vec3.cross( [0,0,0], invDir, hitNorm );
+
+    // Find Direction of slop force
+    const fwd     = vec3.cross( [0,0,0], rotAxis, hitNorm );
+
+    // Maybe use Dot to determine speed somehow? At least
+    // if its negative the direction is going in a downward direction
+    const strength = vec3.dot( invDir, fwd );
+
+    vec3.normalize( rotAxis, rotAxis );
+    vec3.normalize( fwd, fwd );
+
+    Debug.ln.add( hitPos, vec3.scaleAndAdd([0,0,0], hitPos, rotAxis, 2 ), 0xff0000, null, true );
+    Debug.ln.add( hitPos, vec3.scaleAndAdd([0,0,0], hitPos, fwd, 2 ), 0x00ffff, null, false );
+});
+</script></body></html>

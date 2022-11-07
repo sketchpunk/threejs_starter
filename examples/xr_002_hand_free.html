@@ -5,9 +5,9 @@ import XRManager            from '../lib/xr/XRManager.js';
 import ShapePointsMesh      from '../lib/meshes/ShapePointsMesh.js';
 import DynLineMesh          from '../lib/meshes/DynLineMesh.js';
 
-import { GLTFLoader } from 'threejsm/loaders/GLTFLoader.js';
+import { GLTFLoader }       from 'threejsm/loaders/GLTFLoader.js';
 
-import { vec3, quat }             from 'gl-matrix';
+import { vec3, quat }       from 'gl-matrix';
 
 let App;
 let Debug   = {};
@@ -19,7 +19,7 @@ let Ref     = {
 window.addEventListener( "load", _=>{
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     App = new Starter( { webgl2:true, grid:true, xr:true } );
-    App.setCamera( 0, 20, 6 ).startXRRender();
+    App.setCamera( 0, 20, 1 ).startXRRender();
     App.onRender = onRender;
 
     App.scene.add( (Debug.pnt = new ShapePointsMesh()) );
@@ -29,9 +29,9 @@ window.addEventListener( "load", _=>{
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     /**/
     const loader = new GLTFLoader();
-    loader.load( '../assets/rivot/rivot_hand_r.gltf', gltf=>{
-        //console.log( gltf.scene );
-        //App.add( gltf.scene );
+    loader.load( '../assets/free_hand/free_hand.gltf', gltf=>{
+        console.log( gltf.scene );
+        App.add( gltf.scene );
         // Ref.handRight = gltf.scene; //gltf.scene.children[ 1 ];
         // Ref.handRight.scale.set( 0.06, 0.06, 0.06 );
         // console.log( 'Model', Ref.handRight );
@@ -233,19 +233,24 @@ class Chain{
 class HandModel{
     constructor( root, scl=0.06 ){
         this.root = root;
-        this.skel = root.children[ 1 ].children[ 0 ].skeleton;
-        this.root.scale.set( scl, scl, scl );
+        console.log( this.root );
+
+        this.skel = root.children[ 0 ].children[ 1 ].skeleton;
+        // this.root.scale.set( scl, scl, scl );
+
+        console.log( this.skel );
 
         const bones    = this.skel.bones;
-        this.finThumb  = new Chain( [ bones[22], bones[23], bones[24] ] );
-        this.finIndex  = new Chain( [ bones[3],  bones[4],  bones[5] ]  );
-        this.finMiddle = new Chain( [ bones[8],  bones[9],  bones[10] ] );
-        this.finRing   = new Chain( [ bones[13], bones[14], bones[15] ] );
-        this.finPinky  = new Chain( [ bones[18], bones[19], bones[20] ] );
+        this.finThumb  = new Chain( [ bones[13], bones[14], bones[15] ] );
+        this.finIndex  = new Chain( [ bones[1],  bones[2],  bones[3] ]  );
+        this.finMiddle = new Chain( [ bones[4],  bones[5],  bones[6] ] );
+        this.finRing   = new Chain( [ bones[7],  bones[8],  bones[9] ] );
+        this.finPinky  = new Chain( [ bones[10], bones[11], bones[12] ] );
 
-        // skel.bones[ 3 ].rotation.x += -Math.PI * 0.15;
-        // skel.bones[ 4 ].rotation.x += -Math.PI * 0.15;
-        // skel.bones[ 5 ].rotation.x += -Math.PI * 0.15;
+        // const skel = this.skel;
+        // skel.bones[ 1 ].rotation.x += Math.PI * 0.15;
+        // skel.bones[ 2 ].rotation.x += Math.PI * 0.15;
+        // skel.bones[ 3 ].rotation.x += Math.PI * 0.15;
 
         // skel.bones[ 8 ].rotation.x += -Math.PI * 0.35;
         // skel.bones[ 9 ].rotation.x += -Math.PI * 0.35;
