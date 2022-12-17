@@ -1,0 +1,133 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from '../lib/Starter.js';
+import facedCube 			from '../lib/meshes/FacedCube.js';
+
+let App;
+
+window.addEventListener( "load", _=>{
+	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	App = new Starter( { webgl2:false, grid:true } );
+	App.setCamera( 0, 20, 2, [0,0.5,0] ).render();
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Render noise to a texture
+    const mat  = customMaterial();
+    const pass = TexturePass( mat ).render( App.renderer );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Then use that texture on a quad
+    const geo       = new THREE.PlaneGeometry();
+    const mesh      = new THREE.Mesh( geo, new THREE.MeshBasicMaterial( { map: pass.texture, side:THREE.DoubleSide} ) );
+    mesh.position.y = 0.5;
+    App.add( mesh );   
+});
+
+
+function customMaterial(){
+    const mat = new THREE.RawShaderMaterial({
+        name            : 'customMaterial',
+        // side            : DoubleSide,
+        // depthTest       : true,
+        // transparent 	: true,
+        // alphaToCoverage : true,
+        // extensions      : { derivatives : true },
+
+        uniforms        : {
+            scale : { type: 'float', value: 10.0 },
+        },
+
+        vertexShader    : `#version 300 es
+        in	vec3 position;
+        in	vec2 uv;
+        
+        out vec2 fragUV;
+        
+        // ############################################################
+
+        void main(){
+            // Should be a NDC quad, so its values are preset without
+            // the need to move or project it.
+            fragUV      = uv;
+            gl_Position = vec4( position, 1.0 );
+        }`,
+
+        fragmentShader  : `#version 300 es
+        precision mediump float;
+        
+        uniform float scale;
+
+        in  vec2 fragUV;
+        out vec4 outColor;
+
+        // #####################################################################
+
+        // https://github.com/JimmyCushnie/Noisy-Nodes/blob/master/NoiseShader/HLSL/WhiteNoise3D.hlsl
+
+        //vec3 mod289(vec3 x){ return x - floor(x / 289.0) * 289.0; }
+        //vec4 mod289(vec4 x){ return x - floor(x / 289.0) * 289.0; }
+        //vec4 permute(vec4 x){ return mod289((x * 34.0 + 1.0) * x); }
+        //vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159 - r * 0.85373472095314; }
+
+        float rand3dTo1d( vec3 value ){
+            vec3 dotDir = vec3(12.9898, 78.233, 37.719);
+
+            //make value smaller to avoid artefacts
+            vec3 smallValue = sin(value);
+            
+            //get scalar value from 3d vector
+            float random = dot(smallValue, dotDir);
+
+            //make value more random by making it bigger and then taking the factional part
+            random = fract(sin(random) * 143758.5453);
+            return random;
+        }
+
+        // #####################################################################
+
+        void main(){                          
+            float n      = rand3dTo1d( floor( vec3( fragUV * scale, 0.0 ) ) );
+            outColor.rgb = vec3( n );
+            outColor.a   = 1.0;
+        }`
+    });
+
+    return mat;
+}
+
+function TexturePass( mat, props ){
+    // Fill in default values
+    props = Object.assign( { width:256, height:256 }, props );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // use 2 so verts are in the -1 to 1 range this allows 
+    // not needing to use projections in the vertex shader 
+    // as the values are the same as NDC
+    const geo  = new THREE.PlaneGeometry( 2, 2 ); 
+    const quad = new THREE.Mesh( geo, mat );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Setup render scene
+    const camera = new THREE.OrthographicCamera( -1, 1, 1, -1, 0, 1 ); // not needed but 3JS requires camera to render
+    const scene  = new THREE.Scene();
+    scene.add( quad );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Setup our Frame Buffer to render to
+    const fbo    = new THREE.WebGLRenderTarget( props.width, props.height );
+    const render = ( renderer )=>{
+        renderer.setRenderTarget( fbo );
+        renderer.render( scene, camera );
+        renderer.setRenderTarget( null );
+        return self;
+    }
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const self = {
+        texture : fbo.texture,
+        render,
+    };
+
+    return self;
+}
+
+</script></body></html>
