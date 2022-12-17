@@ -1,0 +1,277 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from '../lib/Starter.js';
+import facedCube 			from '../lib/meshes/FacedCube.js';
+import { vec3 }             from 'gl-matrix'
+
+let App;
+let Ref = {
+    lastCamPos : [0,0,0],
+};
+
+/*
+NOTES
+- WebGL Context & ThreeJS Needs to be setup to have preserveBuffer enabled.
+- Must disable any auto clearing that happens with 3JS.
+- For blit to work on framebuffers, the color & depth textures must be identical in setup
+*/
+
+window.addEventListener( "load", _=>{
+	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // IMPORTANT : Need to set the 3JS & the WebGL Context to preserver the buffer
+    // To have control over when the buffers get cleared
+
+	App = new Starter( { webgl2:false, grid:true, preserverBuffer:true } );
+	App.setCamera( 0, 20, 10, [0,0.5,0] );//.render();
+
+    // Extra setup to disable any 3JS related auto clearing of framebuffers
+    App.renderer.autoClearColor = false;
+    App.renderer.autoClearDepth = false;
+
+    const size = App.getRendererSize(); // Size of the canvas to draw to
+    Ref.size   = size;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // SETUP FRAMEBUFFER TO STATIC CONTENT
+    // Note: This scene should only have a faced cube in it.
+
+    const fboBack   = fboColorDepth( size );
+    const backScene = new THREE.Scene();
+    backScene.add( facedCube() );
+
+    Ref.back = {
+        fbo     : fboBack,
+        scene   : backScene,
+    };
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // SETUP FRAMEBUFFER FOR DYNAMIC CONTENT
+    
+    // Note: This scene should have grid floor & moving spheres
+
+    const fboFront = fboColorDepth( size );
+
+    Ref.front = {
+        fbo     : fboFront,
+        scene   : App.scene,
+    };
+
+    const sGeo   = new THREE.SphereGeometry( 0.5, 8, 8 );
+    const sMesh0 = new THREE.Mesh( sGeo, new THREE.MeshPhongMaterial( { color:0x00ffff } ) );
+    const sMesh1 = new THREE.Mesh( sGeo, new THREE.MeshPhongMaterial( { color:0xffff00 } ) );
+    sMesh0.position.x = 2;
+    sMesh1.position.x = -2;
+    App.add( sMesh0 );
+    App.add( sMesh1 );
+
+    Ref.sphere0 = sMesh0;
+    Ref.sphere1 = sMesh1;
+
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // SETUP POST RENDERING
+
+    // Note : This scene should only have a NDC shape to render textures
+    // directly to the screen
+    
+    // Giant Triangle in Device Space, efficent alternative to a quad
+    const geo  = new THREE.BufferGeometry();
+    geo.setAttribute( 'position', new THREE.BufferAttribute( new Float32Array([ -1.0, -1.0, 3.0, -1.0, -1.0, 3.0 ]), 2 ) );
+    geo.setAttribute( 'uv',       new THREE.BufferAttribute( new Float32Array([0, 0, 2, 0, 0, 2]), 2 ) );
+
+    const mesh = new THREE.Mesh( geo, postMaterial( fboFront.texture[0] ) );
+    mesh.frustumCulled = false;
+
+    const postScene = new THREE.Scene();
+    postScene.add( mesh );
+
+    Ref.post = {
+        scene : postScene
+    };
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // FINAL SETUPS
+
+    // Force 3JS to create the resources for the FBO,
+    // Since it will be used with Blit, the gl resources
+    // need to exist before any rendering is done to it.
+    // Setting the render target is enough to create the res.
+    App.renderer.setRenderTarget( fboBack );
+    App.renderer.setRenderTarget( fboFront );
+    App.renderer.setRenderTarget( null );
+
+    //App.add( facedCube() );
+    render();
+});
+
+function render(){
+    const r             = App.renderer;
+    const camPos        = App.camera.position.toArray();
+    const et            = App.clock.getElapsedTime();
+    let   doBackRender  = false;
+
+    if( vec3.sqrDist( Ref.lastCamPos, camPos ) > 0.1 ){
+        vec3.copy( Ref.lastCamPos, camPos );
+        doBackRender = true;
+    }
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Render to framebuffer with the back FBO
+    // Only render to back buffer when the camera changes position
+    if( doBackRender ){
+        r.setRenderTarget( Ref.back.fbo );
+        r.clearColor();
+        r.clearDepth();
+        r.render( Ref.back.scene, App.camera );
+        r.setRenderTarget( null );
+        console.log( 'BackFrame Render' );
+    }
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Perform some animation that will be rendered on the front FBO
+    const radius = 2;
+    const speed  = 3;
+    const offset = 1.5;
+    Ref.sphere0.position.set(
+        Math.cos( et*speed ) * radius,
+        0,
+        Math.sin( et*speed ) * radius,
+    );
+
+    Ref.sphere1.position.set(
+        0,
+        Math.cos( (et + offset) * speed ) * radius,
+        Math.sin( (et + offset) * speed ) * radius,
+    );
+
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Render to framebuffer with the Front FBO
+
+    // Copy the Color & Depth Data from Back Buffer to Front Buffer
+    // This allows this shader pass to use the same depth buffer data.
+    blitFboColorDepth( App.renderer, Ref.size, Ref.back.fbo, Ref.front.fbo );
+
+    r.setRenderTarget( Ref.front.fbo );
+    // If not blit, need to clear but using blit sets all the pixels to the back frame buffer
+    // r.clearColor();
+    // r.clearDepth();
+    r.render( Ref.front.scene, App.camera );
+    r.setRenderTarget( null );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Render final texture to screen
+    //r.render( App.scene, App.camera );
+    r.render( Ref.post.scene, App.camera );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    window.requestAnimationFrame( render );
+}
+
+function postMaterial( texColor=null ){
+    return new THREE.RawShaderMaterial({
+        depthTest       : true,
+        depthWrite      : true,
+        //transparent 	: false,
+        //alphaToCoverage : false,
+        //side            : THREE.DoubleSide,
+        uniforms        : { 
+            texColor     : { type:'sampler2D', value: texColor },
+            //txtDepth     : { type:'sampler2D', value: texDepth },
+        },
+        extensions:{
+            fragDepth: true,
+        },
+    
+        vertexShader    : `#version 300 es
+        in vec2 position;
+		in vec2 uv;
+
+        out vec2 fragUV;
+
+        void main(){            
+            fragUV      = uv;
+            gl_Position = vec4( position.xy, 0.0, 1.0 );
+        }`,
+
+        fragmentShader  : `#version 300 es
+        precision mediump float;
+        
+        uniform sampler2D texColor;
+        //uniform sampler2D texDepth;
+
+        in   vec2 fragUV;
+        out  vec4 outColor;    
+
+        void main(){
+            vec4 color = texture( texColor, fragUV );
+            //outColor   = vec4( 1.0, 0.0, 0.0, 1.0 );
+            outColor   = color;
+        }`,
+    });
+}
+
+function fboColorDepth( size ){
+    const dpr  = window.devicePixelRatio;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const fbo  = new THREE.WebGLMultipleRenderTargets(
+        size[ 0 ] * dpr,
+        size[ 1 ] * dpr,
+        1,
+        { depthBuffer : true }
+    );
+
+    fbo.depthTexture = new THREE.DepthTexture(
+        size[ 0 ] * dpr,
+        size[ 1 ] * dpr,
+        THREE.UnsignedIntType,
+        THREE.UVMapping,
+    );
+    
+    //fbo.depthTexture.format = THREE.DepthFormat;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const tex     = fbo.texture[ 0 ];
+    tex.name      = 'color';
+    tex.minFilter = THREE.NearestFilter;
+    tex.magFilter = THREE.NearestFilter;
+
+    return fbo;
+}
+
+function blitFboColorDepth( renderer, size, fboRead, fboWrite ){
+    // https://developer.mozilla.org/en-US/docs/Web/API/WebGL2RenderingContext/blitFramebuffer
+        
+    const gl   = renderer.getContext();
+    const fboR = renderer.properties.get( fboRead );   // Read From
+    const fboW = renderer.properties.get( fboWrite );  // Write To
+
+    // Bind Read + Write buffers
+    gl.bindFramebuffer( gl.READ_FRAMEBUFFER, fboR.__webglFramebuffer );
+    gl.bindFramebuffer( gl.DRAW_FRAMEBUFFER, fboW.__webglFramebuffer );
+
+    // Clear Draw Buffer, not really needed with blit from the looks of it
+    // gl.clearBufferfv( gl.COLOR, 0, [0.0, 0.0, 0.0, 1.0] ); 
+
+    // Color
+    gl.blitFramebuffer(
+        0, 0, size[0], size[1],
+        0, 0, size[0], size[1],
+        gl.COLOR_BUFFER_BIT, gl.NEAREST
+    );
+
+    // Depth
+    gl.blitFramebuffer(
+        0, 0, size[0], size[1],
+        0, 0, size[0], size[1],
+        gl.DEPTH_BUFFER_BIT, gl.NEAREST
+    );
+    
+    // Unbind
+    gl.bindFramebuffer( gl.READ_FRAMEBUFFER, null );
+    gl.bindFramebuffer( gl.DRAW_FRAMEBUFFER, null );
+
+    return this;
+}
+
+</script></body></html>
