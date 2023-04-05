@@ -1,0 +1,145 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from '../lib/Starter.js';
+import facedCube 			from '../lib/meshes/FacedCube.js';
+
+let App;
+let Ref = {};
+
+window.addEventListener( "load", async _=>{
+	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	App = new Starter( { webgl2:false, grid:true } );
+	App.setCamera( 0, 20, 5, [0, 0.5, 0] );
+    App.onRenderPost = onRenderPost;
+
+	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    Ref.viewport = new ViewportRenderer( App.renderer );
+    Ref.viewport.scene.add( ( Ref.axis = axesMesh() ) );
+
+    let light = new THREE.DirectionalLight( 0xffffff, 0.8 );
+    light.position.set( 4, 10, 1 );
+    Ref.viewport.scene.add( light );
+    Ref.viewport.scene.add( new THREE.AmbientLight( 0x404040 ) );
+
+
+    // App.add( axesMesh() );
+    App.add( facedCube() );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.render();
+});
+
+function onRenderPost( dt, et ){
+    const q = App.camera.quaternion.clone();
+    q.invert();
+    Ref.axis.quaternion.copy( q );
+
+    Ref.viewport.render();
+}
+
+function axesMesh( props={} ){
+    props = Object.assign( {
+        colors          : [ 0xff0000, 0x00ff00, 0x0000ff, 0xffffff ],
+        centerRadius    : 0.2,
+        ballRadius      : 0.15,
+        rodRadius       : 0.08,
+        axisRadius      : 1,
+    }, props );
+
+    let geo;
+    let mesh;
+    const grp = new THREE.Group();
+
+    const fn = ( axis, pos, rot )=>{
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Rod
+        mesh = new THREE.Mesh( 
+            new THREE.CylinderGeometry( props.rodRadius, props.rodRadius, props.axisRadius, 8 ), 
+            new THREE.MeshToonMaterial({color:props.colors[ axis ]} ),
+        );
+        mesh.rotation.fromArray( rot );
+        mesh.position.x = props.axisRadius * 0.5 * pos[0];
+        mesh.position.y = props.axisRadius * 0.5 * pos[1];
+        mesh.position.z = props.axisRadius * 0.5 * pos[2];
+        grp.add( mesh );
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Ball
+        mesh = new THREE.Mesh( 
+            new THREE.SphereGeometry( props.ballRadius, 12, 12 ), 
+            new THREE.MeshToonMaterial({color:props.colors[ axis ]} ),
+        );
+        mesh.position.x = props.axisRadius * pos[0];
+        mesh.position.y = props.axisRadius * pos[1];
+        mesh.position.z = props.axisRadius * pos[2];
+        grp.add( mesh );
+    };
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // CENTER SPHERE
+    mesh = new THREE.Mesh( 
+        new THREE.SphereGeometry( props.centerRadius, 12, 12 ), 
+        new THREE.MeshToonMaterial({color:props.colors[3]} ),
+    );
+    grp.add( mesh );
+
+    // AXES
+    fn( 0, [1,0,0], [0,0,Math.PI*0.5] );
+    fn( 1, [0,1,0], [0,0,0] );
+    fn( 2, [0,0,1], [Math.PI*0.5,0,0] );
+
+    return grp;
+}
+
+class ViewportRenderer{
+    x = 0;
+    y = 0;
+    w = 100;
+    h = 100;
+    renderer = null;
+    scene    = new THREE.Scene();
+    camera   = new THREE.PerspectiveCamera( 45, 1, 0.01, 10 );
+    // camera   = new THREE.OrthographicCamera( -2, 2, 2, -2, 0, 100 )
+
+    constructor( renderer ){
+        this.renderer = renderer;
+
+        this.camera.position.z = 4;
+
+        // if( !config.ortho ){
+        //     this.camera = new THREE.PerspectiveCamera( 45, ratio, 0.01, 1000 );
+        // }else{
+        //     let height  = config.ortho / 2;
+        //     let width   = config.ortho * ratio / 2;
+        //     this.camera = new THREE.OrthographicCamera( -width, width, height, -height, -2500, 2500 );
+        // }
+    }
+
+    render( scene=null ){
+        const rend = this.renderer;
+        
+        // Enable viewport rendering
+        rend.setViewport( this.x, this.y, this.w, this.h );
+        rend.setScissor( this.x, this.y, this.w, this.h );
+        rend.setScissorTest( true );
+
+        // Render
+        // rend.setClearAlpha( 0 );
+        rend.autoClearColor = false;
+        // rend.autoClearDepth = false;
+        // r.clearColor();
+        // r.clearDepth();
+        
+        // rend.render( scene || this.scene, App.camera );
+        rend.render( scene || this.scene, this.camera );
+
+        // Reset back to normal rendering
+        const size = rend.getSize( new THREE.Vector2() ).toArray();
+        rend.autoClearColor = true;
+        // rend.autoClearDepth = true;
+        
+        // rend.setClearAlpha( 1 );
+        rend.setViewport( 0, 0, size[0], size[1] );
+        rend.setScissorTest( false );
+    }
+}
+</script></body></html>
