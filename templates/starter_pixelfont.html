@@ -11,13 +11,16 @@ window.addEventListener( "load", _=>{
     App.setCamera( 0, 0, 2 ).render();
 
     const mesh = new PixelFontMesh();
-    mesh.setRes( 3, 2 );
+    mesh.setRes( 3, 2 )
+        //.setColor( 0x00ff00 ).setAlpha( 0 );
 
     mesh.setPos( 0, 0 );
     mesh.addText( 'MO', 1 );
 
     mesh.setPos( 0, 1 );
     mesh.addText( 'Sketchpunk' );
+
+    // mesh.setPos( 0.12,0.5 ).addText( 'TOP' );
 
     App.add( mesh );
 });

@@ -1,0 +1,355 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+
+import Starter, { THREE } from '../lib/Starter.js';
+import PixelFontMesh      from '../lib/meshes/PixelFontMesh.js';
+
+import BoxBorderMaterial  from '../lib/materials/BoxBorderMaterial.js';
+import { vec3, vec4, quat }     from 'gl-matrix';
+
+let App;
+let Ref = {};
+
+window.addEventListener( "load", _=>{
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:true, grid:true } );
+    App.onRender = onRender;
+    App.setCamera( 0, 20, 5 ).render();
+
+    Ref.ray = new RayTester( App.camera, App.renderer );
+
+    const mat = BoxBorderMaterial({ 
+        faceColor   : 0x808080,
+        faceAlpha   : 1,
+        borderColor : 0xffffff,
+        borderSize  : 0.04,
+    });
+
+    const geo = new THREE.BoxGeometry( 1, 1, 1 );
+    const box = new THREE.Mesh( geo, mat );
+    App.add( box );
+    Ref.box = box;
+
+    const pxProps = { res:[5,3], alpha:0 };
+
+    const mFwd = new PixelFontMesh( pxProps ).setPos( 0.15,1 ).addText( 'Front' );
+    mFwd.position.z = 0.51;
+    mFwd.scale.setScalar( 0.8 );
+    App.add( mFwd );
+
+    const mRit = new PixelFontMesh( pxProps ).setPos( 0.15,1 ).addText( 'Right' );
+    mRit.position.x = 0.51;
+    mRit.rotation.y = Math.PI * 0.5;
+    mRit.scale.setScalar( 0.8 );
+    App.add( mRit );
+
+    const mBak = new PixelFontMesh( pxProps ).setPos( 0.5,1 ).addText( 'Back' );
+    mBak.position.z = -0.51;
+    mBak.rotation.y = Math.PI;
+    mBak.scale.setScalar( 0.8 );
+    App.add( mBak );
+
+    const mLft = new PixelFontMesh( pxProps ).setPos( 0.5,1 ).addText( 'Left' );
+    mLft.position.x = -0.51;
+    mLft.rotation.y = -Math.PI * 0.5;
+    mLft.scale.setScalar( 0.8 );
+    App.add( mLft );
+
+    const mTop = new PixelFontMesh( pxProps ).setPos( 1,1 ).addText( 'Top' );
+    mTop.position.y = 0.51;
+    mTop.rotation.x = -Math.PI * 0.5;
+    mTop.scale.setScalar( 0.8 );
+    App.add( mTop );
+
+    const mBot = new PixelFontMesh( pxProps ).setPos( 1,1 ).addText( 'Bot' );
+    mBot.position.y = -0.51;
+    mBot.rotation.x = Math.PI * 0.5;
+    mBot.scale.setScalar( 0.8 );
+    App.add( mBot );
+});
+
+function onRender( dt ){
+    Animator.update( dt );
+}
+
+const LOOKXP = [0,-0.7071067811865475,0,0.7071067811865475];
+const LOOKXN = [0,0.7071067811865475,0,0.7071067811865475];
+const LOOKYP = [0.7071067811865475,0,0,0.7071067811865475];
+const LOOKYN = [-0.7071067811865475,0,0,0.7071067811865475];
+const LOOKZP = [0,-1,0,0];
+const LOOKZN = [0,0,0,1];
+
+const DIR = {
+    RIGHT  : 0,
+    TOP    : 1,
+    FRONT  : 2,
+    LEFT   : 3,
+    BOTTOM : 4,
+    BACK   : 5,
+
+    NORMS  : [
+        [1,0,0],
+        [0,1,0],
+        [0,0,1],
+        [-1,0,0],
+        [0,-1,0],
+        [0,0,-1],
+    ],
+
+    QUAT   : [
+        LOOKXP,
+        LOOKYP,
+        LOOKZP,
+        LOOKXN,
+        LOOKYN,
+        LOOKZN,
+    ],
+}
+
+window.addEventListener( 'pointerdown', e=>{
+    if( !e.shiftKey ) return;
+    
+    const hits = Ref.ray.fromMouseEvent( e ).inObjects( [ Ref.box ] );
+    if( hits.length ){
+        const n = hits[0].face.normal;
+        let dir = -1;
+        if( n.x > 0.5 )         dir = DIR.RIGHT;
+        else if( n.x < -0.5 )   dir = DIR.LEFT;
+        else if( n.y >  0.5 )   dir = DIR.TOP;
+        else if( n.y < -0.5 )   dir = DIR.BOTTOM;
+        else if( n.z >  0.5 )   dir = DIR.FRONT;
+        else if( n.z < -0.5 )   dir = DIR.BACK;
+
+        if( dir !== -1 ) moveAxisCamera( dir );
+    }
+});
+
+
+function moveAxisCamera( dir ){
+    const c     = App.camera;
+    const pos   = c.position.toArray();
+    const dist  = vec3.len( pos );
+
+    vec3.scale( pos, DIR.NORMS[ dir ], dist );
+
+    // c.position.fromArray( pos );
+    // c.quaternion.fromArray( DIR.QUAT[ ( dir + 3 ) % 6 ] );
+
+    Animator.moveTo( pos, DIR.QUAT[ ( dir + 3 ) % 6 ] );
+}
+
+class RayTester{
+    caster   = new THREE.Raycaster();
+    coord    = new THREE.Vector2();
+    viewSize = new THREE.Vector2();
+    camera   = null;
+    renderer = null;
+
+    constructor( camera, renderer ){
+        this.camera   = camera;
+        this.renderer = renderer;
+    }
+
+    fromMouseEvent( e ){
+        // Compute NDC screen coordinate of mouse over canvas
+        this.renderer.getSize( this.viewSize );
+        this.coord.x =  ( event.clientX / this.viewSize.x ) * 2 - 1;
+        this.coord.y = -( event.clientY / this.viewSize.y ) * 2 + 1;
+        this.caster.setFromCamera( this.coord, this.camera );
+        return this;
+    }
+
+    inObjects( ary, checkChildren=false ){
+        return this.caster.intersectObjects( ary, checkChildren );
+    }
+}
+
+
+class Animator{
+    static posTar    = [0,0,0];
+    static posVel    = [0,0,0];
+
+    static rotTar    = [0,0,0,1];
+    static rotVel    = [0,0,0,0];
+
+    static isRunning = false;
+
+    static moveTo( pos, rot ){
+        vec3.copy( this.posTar, pos );
+        vec4.copy( this.rotTar, rot );
+        this.isRunning = true;
+    }
+
+    static update( dt ){
+        if( !this.isRunning ) return;
+
+        const [ pos, isPosDone ] = smoothDampVec3(
+            App.camera.position.toArray(),
+            this.posTar,
+            this.posVel,
+            dt,
+            0.2,
+        );
+
+        App.camera.position.fromArray( pos );
+
+
+        // const [ rot, isRotDone ] = smoothDampQuat(
+        //     App.camera.quaternion.toArray(),
+        //     this.rotTar,
+        //     this.rotVel,
+        //     dt,
+        //     0.1,
+        // );
+
+        // App.camera.quaternion.fromArray( rot );
+
+        const q = App.camera.quaternion.toArray();
+        if( quat.dot( q, this.rotTar ) < 0 ){
+            vec4.scale( q, q, -1 );
+        }
+
+        const rot = quat.slerp( [0,0,0,0], App.camera.quaternion.toArray(), this.rotTar, 0.1 );
+        const isRotDone = ( Math.abs( vec4.dot( rot, this.rotTar ) ) > 0.99999 );
+        App.camera.quaternion.fromArray( rot );
+
+        this.isRunning = !( isPosDone && isRotDone );
+
+        console.log( Math.abs( vec4.dot( rot, this.rotTar ) ), isPosDone, isRotDone );
+    }
+}
+
+function smoothDampVec3( cur, tar, vel, dt, smoothTime=0.25, maxSpeed = Infinity ){
+    // Based on Game Programming Gems 4 Chapter 1.10
+    smoothTime   = Math.max( 0.0001, smoothTime );
+    const omega  = 2 / smoothTime;
+    const x      = omega * dt;
+    const exp    = 1 / ( 1 + x + 0.48 * x * x + 0.235 * x * x * x );
+
+    const change = vec3.sub( [0,0,0], cur, tar );
+
+    // Clamp maximum speed
+    const maxChange   = maxSpeed * smoothTime;
+    const maxChangeSq = maxChange * maxChange;
+    const magnitudeSq = change[0]**2 + change[1]**2 + change[2]**2;
+
+    if( magnitudeSq > maxChangeSq ){
+        const magnitude = Math.sqrt( magnitudeSq );
+        vec3.scale( change, change, 1 / (magnitude * maxChange ) );
+    }
+
+    const diff = vec3.sub( [0,0,0], cur, change );
+
+    // const tempX = ( velocity.x + omega * changeX ) * deltaTime;
+    const temp  = vec3.scaleAndAdd( [0,0,0], vel, change, omega );
+    vec3.scale( temp, temp, dt );
+
+    // velocityR.x = ( velocity.x - omega * tempX ) * exp;
+    vec3.scaleAndAdd( vel, vel, temp, -omega );
+    vec3.scale( vel, vel, exp );
+
+    // out.x = targetX + ( changeX + tempX ) * exp;
+    const out = vec3.add( [0,0,0], change, temp );
+    vec3.scale( out, out, exp );
+    vec3.add( out, diff, out );
+
+    // Prevent overshooting
+    const origMinusCurrent = vec3.sub( [0,0,0], tar, cur );
+    const outMinusOrig     = vec3.sub( [0,0,0], out, tar );
+    let isDone             = false;
+
+    if( origMinusCurrent[0] * outMinusOrig[0] + origMinusCurrent[1] * outMinusOrig[1] + origMinusCurrent[2] * outMinusOrig[2] > -0.00001 ){
+        vec3.copy( out, tar );
+        vec3.copy( vel, [0,0,0] );
+        isDone = true;
+    }
+
+    return [ out, isDone ];
+}
+
+function smoothDamp( cur, tar, vel, dt, smoothTime=0.25, maxSpeed=Infinity ){
+    // Based on Game Programming Gems 4 Chapter 1.10
+    smoothTime      = Math.max( 0.0001, smoothTime );
+    const omega     = 2 / smoothTime;
+    const x         = omega * dt;
+    const exp       = 1 / ( 1  + x + 0.48 * x * x + 0.235 * x * x * x);
+    let   change    = cur - tar;
+
+    // Clamp maximum speed
+    const maxChange = maxSpeed * smoothTime;
+    change          = Math.min( maxChange, Math.max( change, -maxChange ) );
+
+    const temp      = ( vel + omega * change ) * dt;
+    vel             = ( vel - omega * temp ) * exp;
+    let val         = ( cur - change ) + ( change + temp ) * exp;
+
+    // Prevent overshooting
+    let isDone = false;
+    if( tar - cur <= 0.0001 || val > tar ){
+        val    = tar;
+        vel    = 0;
+        isDone = true;
+    }
+
+    return [ val, vel, isDone ];
+}
+
+// https://gist.github.com/maxattack/4c7b4de00f5c1b95a33b
+
+function smoothDampQuat( rot, target, vel, dt, smoothTime=0.2 ){
+
+		// account for double-cover
+		// var Dot = Quaternion.Dot( rot, target);
+		// var Multi = Dot > 0 ? 1 : -1;
+		// target.x *= Multi;
+		// target.y *= Multi;
+		// target.z *= Multi;
+		// target.w *= Multi;
+        const flip = quat.dot( rot, target ) > 0 ? 1 : -1;
+        const tx = target[ 0 ] * flip;
+        const ty = target[ 1 ] * flip;
+        const tz = target[ 2 ] * flip;
+        const tw = target[ 3 ] * flip;
+
+		// smooth damp (nlerp approx)
+		// var Result = new Vector4(
+		// 	Mathf.SmoothDamp(rot.x, target.x, ref deriv.x, time),
+		// 	Mathf.SmoothDamp(rot.y, target.y, ref deriv.y, time),
+		// 	Mathf.SmoothDamp(rot.z, target.z, ref deriv.z, time),
+		// 	Mathf.SmoothDamp(rot.w, target.w, ref deriv.w, time)
+		// ).normalized;
+
+        const sx  = smoothDamp( rot[0], tx, vel[0], dt, smoothTime );
+        const sy  = smoothDamp( rot[1], ty, vel[1], dt, smoothTime );
+        const sz  = smoothDamp( rot[2], tz, vel[2], dt, smoothTime );
+        const sw  = smoothDamp( rot[3], tw, vel[3], dt, smoothTime );
+        
+        const out = [ sx[0], sy[0], sz[0], sw[0] ];
+        quat.normalize( out, out );
+
+        vel[ 0 ] = sx[ 1 ];
+        vel[ 1 ] = sy[ 1 ];
+        vel[ 2 ] = sz[ 1 ];
+        vel[ 3 ] = sw[ 1 ];
+
+        const isDone = sx[ 2 ] && sy[ 2 ] && sz[ 2 ] && sw[ 2 ];
+		
+        // ensure deriv ( vel ) is tangent
+        // Project(Vector4 a, Vector4 b) { return b * (Dot(a, b) / Dot(b, b)); }
+        // const scl = vec4.dot( vel, out ) / vec4.dot( out, out );
+        // const err = vec4.scale( [0,0,0,0], out, scl );
+        // vel[0] -= err[ 0 ];
+        // vel[1] -= err[ 1 ];
+        // vel[2] -= err[ 2 ];
+        // vel[3] -= err[ 3 ];
+
+		// var derivError = Vector4.Project(new Vector4(deriv.x, deriv.y, deriv.z, deriv.w), Result);
+		// deriv.x -= derivError.x;
+		// deriv.y -= derivError.y;
+		// deriv.z -= derivError.z;
+		// deriv.w -= derivError.w;		
+		
+		// return new Quaternion(Result.x, Result.y, Result.z, Result.w);
+        return [ out, isDone ];
+	}
+
+</script></body></html>

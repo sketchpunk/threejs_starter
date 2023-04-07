@@ -1,0 +1,139 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }     from '../lib/Starter.js';
+import facedCube 			  from '../lib/meshes/FacedCube.js';
+import CanvasKeyboardHandlers from '../lib/camera/CanvasKeyboardHandlers.js';
+import CanvasPointerHandlers  from '../lib/camera/CanvasPointerHandlers.js';
+
+import { quat, vec3 } from 'gl-matrix';
+
+import {
+    lookAt,
+    orbitStep,
+} from '../lib/camera/CameraMovements.js';
+
+let App;
+let Ref = {};
+
+window.addEventListener( "load", async _=>{
+	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	App = new Starter( { webgl2:false, grid:true, orbit:false } ); //true, ortho:5 
+	// App.setCamera( 0, 20, 5, [0, 0.5, 0] );
+    App.onRenderPost = onRenderPost;
+
+    Ref.pHandlers = new CanvasPointerHandlers( App.renderer.domElement ).enable();
+    Ref.pHandlers.onPointerDown  = onPointerDown;
+    Ref.pHandlers.onPointerMove  = onPointerMove;
+    Ref.pHandlers.onPointerWheel = onPointerWheel;
+
+    Ref.kHandlers = new CanvasKeyboardHandlers( App.renderer.domElement ).enable();
+    Ref.kHandlers.onKeyDown = onKeyDown;
+
+    const size  =  App.getRendererSize();
+    let ratio   = size[0] / size[1];
+    let orth    = 1.0;
+    let height  = orth / 2;
+    let width   = orth * ratio / 2;
+
+    console.log( width, height );
+
+    App.camera = new THREE.OrthographicCamera( -width, width, height, -height, -1, 2000 );
+    App.camera.rotation.reorder( 'YXZ' );
+
+    App.camera.zoom = 1/4;
+    App.camera.position.set( -20, 10, 0 );
+    App.camera.quaternion.fromArray( lookAt( [0,0,0,0], App.camera.position.toArray(), [0,0,0], [0,1,0] ) );
+    // App.camera.rotation.y = -5 * Math.PI / 180;
+    App.camera.rotation.x = -0.4636476090008062;
+    App.camera.updateProjectionMatrix();
+
+    // panLeft( deltaX * ( scope.object.right - scope.object.left ) / scope.object.zoom / element.clientWidth, scope.object.matrix );
+    
+    // console.log( size );
+    // App.camera.position.set( 10, 0, 10 );
+    // App.orbit.update();
+
+    console.log( App.camera.position.toArray(), App.camera.rotation.toArray(), 'Zoom', App.camera.zoom, 'Left', App.camera.left, 'right', App.camera.right, 'top', App.camera.top, 'bot', App.camera.bottom, );
+    // [0, 10.000000000000004, 20] (4) [-0.4636476090008062, 0, 0, 'YXZ'] 'Zoom' 1 'Left' -1.7354497354497354 'right' 1.7354497354497354 'top' 0.5 'bot' -0.5
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const m = facedCube();
+    m.position.z = 0;
+    App.add( m );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.render();
+});
+
+function onRenderPost( dt, et ){
+    // console.log( App.camera.position.toArray() );
+    // console.log( App.camera.quaternion.toArray() );
+    // console.log( App.camera.zoom, App.camera.position.toArray() );
+}
+
+function onPointerDown( e, pos ){
+    console.log( pos );
+}
+
+const target = [0,0,0];
+function onPointerMove( e, coord, delta, vel ){
+    // console.log( vel );
+
+    const c = App.camera;
+
+    if( e.shiftKey ){
+        
+        // Movement scaled to distance. Same amount of movement if close or zoomed away.
+        let x = -vel[ 0 ] * ( c.right - c.left ) / c.zoom / e.target.clientWidth;
+        let y =  vel[ 1 ] * ( c.top - c.bottom ) / c.zoom / e.target.clientHeight;
+        App.camera.position.x += x;
+        App.camera.position.y += y;
+        // target[ 0 ] += x;
+        // target[ 2 ] += y;
+
+    }else{
+
+        // Orbit
+        let x = Math.PI * -vel[0] / e.target.clientHeight;
+        let y = Math.PI * vel[1] / e.target.clientHeight;
+
+        const pos = orbitStep( x, y, c.position.toArray(), target );
+
+        c.position.fromArray( pos );
+        c.quaternion.fromArray( lookAt( [0,0,0,0], pos, target, [0,1,0] ) );
+    }
+
+
+    // deltaX * ( scope.object.right - scope.object.left ) / scope.object.zoom / element.clientWidth
+
+}
+
+
+function onPointerWheel( e, tick ){
+    const c = App.camera;
+    
+    const zFactor = 0.95;
+    const z = ( tick < 0 )? c.zoom / zFactor : c.zoom * zFactor;
+
+
+    console.log( z );
+    c.zoom = Math.max( 0.000001, z );
+    c.updateProjectionMatrix();
+}
+
+function onKeyDown( e, o ){
+    const move = o.getWASDAxes();
+    const spin = o.getArrowAxes();
+    const c = App.camera;
+
+    c.position.x += move[ 0 ] * 0.1;
+    c.position.y += move[ 1 ] * 0.1;
+    if( move[2] !== 0 ){
+        const zFactor = 0.95;
+        c.zoom = Math.max( 0.000001, ( move[2] < 0 )? c.zoom / zFactor : c.zoom * zFactor );
+        c.updateProjectionMatrix();
+    }
+
+    c.rotation.y += spin[0] * 1 * Math.PI / 180;
+    c.rotation.x += spin[1] * 1 * Math.PI / 180;    
+}
+
+</script></body></html>

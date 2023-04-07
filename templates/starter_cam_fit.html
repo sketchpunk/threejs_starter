@@ -1,0 +1,275 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }     from '../lib/Starter.js';
+import facedCube 			  from '../lib/meshes/FacedCube.js';
+import CanvasKeyboardHandlers from '../lib/camera/CanvasKeyboardHandlers.js';
+import CanvasPointerHandlers  from '../lib/camera/CanvasPointerHandlers.js';
+
+import ShapePointsMesh     from "../lib/meshes/ShapePointsMesh.js";
+import DynLinesMesh        from "../lib/meshes/DynLineMesh.js";
+
+import { quat, vec3 } from 'gl-matrix';
+
+import {
+    lookAt,
+    orbitStep,
+    lookDirection,
+    roundAxisLook,
+} from '../lib/camera/CameraMovements.js';
+
+let App;
+let Debug = {};
+let Ref   = {};
+
+window.addEventListener( "load", async _=>{
+	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	App = new Starter( { webgl2:false, grid:true, orbit:true } ); //true, ortho:5 
+	App.setCamera( 0, 0, 8, [0, 0, 0] );
+    App.onRenderPost = onRenderPost;
+
+
+    App.add( (Debug.pnt = new ShapePointsMesh() ) );
+    App.add( (Debug.ln  = new DynLinesMesh() ) );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry( 2, 2, 1 ),
+        new THREE.MeshBasicMaterial( { color: 0x00ffff, wireframe: true } )
+    );
+    Ref.mesh = mesh;
+    App.add( mesh );
+
+    // App.camera.zoom = 0.1;
+    App.camera.updateProjectionMatrix();
+
+    // App.camera.position.x = -4;
+    // App.camera.lookAt( Ref.mesh.position );
+
+    // App.camera.quaternion.fromArray( [0,0,0,1] ); // look -Z
+    // [0, -1, 0, 0] Look +Z
+    // [0, -0.7071067811865475, 0, 0.7071067811865475] Look +X
+    // [0, 0.7071067811865475, 0, 0.7071067811865475] Look -X
+    // [0.7071067811865475, 0, 0, 0.7071067811865475] look +Y
+    // [-0.7071067811865475, 0, 0, 0.7071067811865475] look -Y
+
+
+    // App.camera.position.set( 0, 0, -5 );
+    // const q = quat.rotationTo( [0,0,0,0], [0,0,1], [0,0,-1] );
+    // console.log( q );
+    // App.camera.quaternion.fromArray( q );
+
+    mesh.geometry.computeBoundingBox();
+    const aabb = mesh.geometry.boundingBox;
+
+    // // Realign camera to nearest axis for the look direction
+    // App.camera.quaternion.fromArray( roundAxisLook( App.camera.quaternion.toArray() ) );
+    // const axisLook = roundAxisLook( App.camera.quaternion.toArray() );
+    const axisLook = App.camera.quaternion.toArray();
+
+    let box = new AABB( aabb.min.toArray(), aabb.max.toArray() );
+    let corners = box.getCorners();
+    for( let i of corners ) Debug.pnt.add( i, 0x00ff00, 3 );
+
+    let box2 = new AABB();
+    for( let i of corners ){
+        vec3.transformQuat( i, i , axisLook );
+        Debug.pnt.add( i, 0xffffff, 2 );
+        box2.expandByPoint( i );
+    }
+
+    let corners2 = box2.getCorners();
+    for( let i of corners2 ) Debug.pnt.add( i, 0xffff00, 2 );
+    let center = box2.getCenter();
+    let size   = box2.getSize();
+    console.log( size );
+    Debug.pnt.add( center, 0xff0000, 5 );
+
+    const dist = fitBoxPerspectiveDistance( App.camera, size[0], size[1], size[2], false );
+    const fwd  = vec3.transformQuat( [0,0,0], [0,0,1], axisLook );
+    const pos  = vec3.scaleAndAdd( [0,0,0], center, fwd, dist );
+    // Ref.target = pos;
+
+    setTimeout( ()=>{ Ref.target = pos;}, 2000 );
+
+    // const dist = fitBoxOrthographicZoom( App.camera, size[0], size[1], false );
+    // Ref.target = dist;
+
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.render();
+});
+
+const velocity = [0,0,0];
+
+function onRenderPost( dt, et ){
+    if( Ref.target ){
+        const c   = App.camera;
+
+        const pos = smoothDampVec3( c.position.toArray(), Ref.target, velocity, dt );
+        c.position.fromArray( pos );
+
+        // const [ zoom, vel ] = smoothDamp( c.zoom, Ref.target, velocity[0], dt );
+        // velocity[ 0 ] = vel;
+        // c.zoom = zoom;
+        // c.updateProjectionMatrix();
+    }
+}
+
+
+function roundToStep( value, step ) {
+    return Math.round( value / step ) * step;
+}
+
+
+function fitBoxPerspectiveDistance( camera, width, height, depth, cover=false ){
+    // Cover tries to fill width more then height
+    const fov      = camera.getEffectiveFOV() * 0.01745329251; // FOV in Radians
+    const camRatio = camera.aspect;
+    const boxRatio = width / height;
+
+    const fitSize  = ( cover ? boxRatio > camRatio : boxRatio < camRatio ) ? height : width / camRatio;
+    return fitSize * 0.5 / Math.tan( fov * 0.5 ) + depth * 0.5;
+}
+
+function fitSpherePerspectiveDistance( camera, radius ){
+    // https://stackoverflow.com/a/44849975
+    const vFOV = camera.getEffectiveFOV() * 0.01745329251;
+    const fov  = ( 1 < camera.aspect )? 
+        vFOV : 
+        Math.atan( Math.tan( vFOV * 0.5 ) * camera.aspect ) * 2; // Horizontal FOV
+
+    return radius / Math.sin( fov * 0.5 );
+}
+
+function fitBoxOrthographicZoom( camera, width, height, cover=false ){
+    const w      = camera.right - camera.left;
+    const h      = camera.top   - camera.bottom;
+    return cover ? Math.max( w / width, h / height ) : Math.min( w / width, h / height );
+}
+
+function fitSphereOrthographicZoom( camera, radius ){
+    const w        = camera.right - camera.left;
+    const h        = camera.top   - camera.bottom;
+    const diameter = 2 * radius;
+    return Math.min( w / diameter, h / diameter );
+}
+
+class AABB{
+    min = [0,0,0];
+    max = [0,0,0];
+
+    constructor( min=null, max=null ){
+        if( min && max ) this.set( min, max );
+    }
+
+    set( min, max ){
+        vec3.copy( this.min, min );
+        vec3.copy( this.max, max );
+        return this;
+    }
+
+    expandByPoint( pos ) {
+        vec3.min( this.min, this.min, pos );
+        vec3.max( this.max, this.max, pos );
+        return this;
+    }
+
+    getSize(){ return vec3.sub( [0,0,0], this.max, this.min ); }
+    getCenter(){ return vec3.lerp( [0,0,0], this.min, this.max, 0.5 ); }
+
+    getCorners(){
+        const x1  = this.min[0], y1 = this.min[1], z1 = this.min[2];
+        const x2  = this.max[0], y2 = this.max[1], z2 = this.max[2];
+        const rtn = [
+            [x1,y1,z1], // Bottom Face - Start at min corner
+            [x1,y1,z2], 
+            [x2,y1,z2],
+            [x2,y1,z1],
+
+            [x1,y2,z1], // Top face - start of min corner but max height
+            [x1,y2,z2],
+            [x2,y2,z2], // max corner
+            [x2,y2,z1],
+        ];
+        return rtn;
+    }
+}
+
+
+// https://docs.unity3d.com/ScriptReference/Mathf.SmoothDamp.html
+// https://github.com/Unity-Technologies/UnityCsReference/blob/a2bdfe9b3c4cd4476f44bf52f848063bfaf7b6b9/Runtime/Export/Math/Mathf.cs#L308
+function smoothDamp( cur, tar, vel, dt, smoothTime=0.25, maxSpeed=Infinity ){
+    // Based on Game Programming Gems 4 Chapter 1.10
+    smoothTime      = Math.max( 0.0001, smoothTime );
+    const omega     = 2 / smoothTime;
+    const x         = omega * dt;
+    const exp       = 1 / ( 1  + x + 0.48 * x * x + 0.235 * x * x * x);
+    let   change    = cur - tar;
+
+    // Clamp maximum speed
+    const maxChange = maxSpeed * smoothTime;
+    change          = Math.min( maxChange, Math.max( change, -maxChange ) );
+
+    const temp      = ( vel + omega * change ) * dt;
+    vel             = ( vel - omega * temp ) * exp;
+    let val         = ( cur - change ) + ( change + temp ) * exp;
+
+    // Prevent overshooting
+    if( tar - cur > -0.00001 && val > tar ){
+        val = tar;
+        vel = 0;
+    }
+
+    return [ val, vel ];
+}
+
+
+// // https://docs.unity3d.com/ScriptReference/Vector3.SmoothDamp.html
+// // https://github.com/Unity-Technologies/UnityCsReference/blob/a2bdfe9b3c4cd4476f44bf52f848063bfaf7b6b9/Runtime/Export/Math/Vector3.cs#L97
+// smoothTime : How much time should it take to reach target in seconds
+function smoothDampVec3( cur, tar, vel, dt, smoothTime = 0.25, maxSpeed = Infinity ){
+    // Based on Game Programming Gems 4 Chapter 1.10
+    smoothTime   = Math.max( 0.0001, smoothTime );
+    const omega  = 2 / smoothTime;
+    const x      = omega * dt;
+    const exp    = 1 / ( 1 + x + 0.48 * x * x + 0.235 * x * x * x );
+
+    const change = vec3.sub( [0,0,0], cur, tar );
+
+    // Clamp maximum speed
+    const maxChange   = maxSpeed * smoothTime;
+    const maxChangeSq = maxChange * maxChange;
+    const magnitudeSq = change[0]**2 + change[1]**2 + change[2]**2;
+
+    if( magnitudeSq > maxChangeSq ){
+        const magnitude = Math.sqrt( magnitudeSq );
+        vec3.scale( change, change, 1 / (magnitude * maxChange ) );
+    }
+
+    const diff = vec3.sub( [0,0,0], cur, change );
+
+    // const tempX = ( velocity.x + omega * changeX ) * deltaTime;
+    const temp  = vec3.scaleAndAdd( [0,0,0], vel, change, omega );
+    vec3.scale( temp, temp, dt );
+
+    // velocityR.x = ( velocity.x - omega * tempX ) * exp;
+    vec3.scaleAndAdd( vel, vel, temp, -omega );
+    vec3.scale( vel, vel, exp );
+
+    // out.x = targetX + ( changeX + tempX ) * exp;
+    const out = vec3.add( [0,0,0], change, temp );
+    vec3.scale( out, out, exp );
+    vec3.add( out, diff, out );
+
+    // Prevent overshooting
+    const origMinusCurrent = vec3.sub( [0,0,0], tar, cur );
+    const outMinusOrig     = vec3.sub( [0,0,0], out, tar );
+
+    if( origMinusCurrent[0] * outMinusOrig[0] + origMinusCurrent[1] * outMinusOrig[1] +  origMinusCurrent[2] * outMinusOrig[2] > -0.00001 ){
+        vec3.copy( out, tar );
+        vec3.copy( vel, [0,0,0] );
+    }
+
+    return out;
+}
+
+</script></body></html>
