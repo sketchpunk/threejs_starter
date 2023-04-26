@@ -106,7 +106,7 @@ const DIR = {
 }
 
 window.addEventListener( 'pointerdown', e=>{
-    if( !e.shiftKey ) return;
+    // if( !e.shiftKey ) return;
     
     const hits = Ref.ray.fromMouseEvent( e ).inObjects( [ Ref.box ] );
     if( hits.length ){
@@ -177,6 +177,7 @@ class Animator{
         vec3.copy( this.posTar, pos );
         vec4.copy( this.rotTar, rot );
         this.isRunning = true;
+
     }
 
     static update( dt ){
@@ -214,7 +215,7 @@ class Animator{
 
         this.isRunning = !( isPosDone && isRotDone );
 
-        console.log( Math.abs( vec4.dot( rot, this.rotTar ) ), isPosDone, isRotDone );
+        // console.log( Math.abs( vec4.dot( rot, this.rotTar ) ), isPosDone, isRotDone, !this.isRunning );
     }
 }
 

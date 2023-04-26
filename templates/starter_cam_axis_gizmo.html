@@ -1,0 +1,392 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }       from '../lib/Starter.js';
+
+let App;
+let Ref = {};
+
+window.addEventListener( "load", _=>{
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:false, grid:true } );
+    App.setCamera( 0, 20, 6 ); //.render();
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // const axes = axesMesh( { incNegitive:true } );
+    // Ref.axes = axes;
+    // App.add( axes );
+
+    // Ref.ray = new RayCasting( App.camera, App.renderer ).enable();
+    // Ref.ray.onMouseDown  = onMouseDown;
+    // Ref.ray.onMouseHover = onMouseHover;
+
+    // const viewport = new ViewportRenderer( App.renderer ).useDefaultLighting();
+    // viewport.scene.add( axes );
+    // Ref.viewport = viewport;
+
+    Ref.oGizmo = new OrientationGizmo( App.camera, App.renderer );
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.onRenderPost = onRenderPost;
+    App.render();
+});
+
+function onRenderPost( dt, et ){
+    // Ref.viewport.render();
+
+    Ref.oGizmo.update();
+}
+
+function onMouseHover( ray ){
+    const hit = ray.inObjects( Ref.axes.children );
+    if( hit.length === 0 || hit[0].object.name === '' ){
+        Ref.axes.highLightAxis( -1 );
+        return;
+    }
+
+    const obj = hit[0].object;
+    Ref.axes.highLightAxis( obj.userData.axis );
+}
+
+function onMouseDown( ray ){
+    const hit = ray.inObjects( Ref.axes.children );
+    console.log( hit );
+    if( hit.length === 0 || !hit[0].object?.userData?.norm ) return;
+
+    const obj = hit[0].object;
+    console.log( obj.name, obj.userData.norm );
+}
+
+function axesMesh( props={} ){
+    props = Object.assign( {
+        colors          : [ 0xff0000, 0x00ff00, 0x0000ff, 0xF76969, 0xA8DFA2, 0xABCAF7, 0xffffff ],
+        centerRadius    : 0.2,
+        ballRadius      : 0.15,
+        rodRadius       : 0.08,
+        axisRadius      : 1,
+        incNegitive     : false,
+        emIntensity     : 1.0,
+        emColor         : 0xffffff,
+    }, props );
+
+    let geo;
+    let mesh;
+    const grp = new THREE.Group();
+
+    const fn = ( axis, pos, rot )=>{
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Rod
+        mesh = new THREE.Mesh( 
+            new THREE.CylinderGeometry( props.rodRadius, props.rodRadius, props.axisRadius, 8 ), 
+            new THREE.MeshToonMaterial({color:props.colors[ axis ]} ),
+        );
+        mesh.rotation.fromArray( rot );
+        mesh.position.x = props.axisRadius * 0.5 * pos[0];
+        mesh.position.y = props.axisRadius * 0.5 * pos[1];
+        mesh.position.z = props.axisRadius * 0.5 * pos[2];
+        mesh.userData   = { axis, norm:pos };
+        mesh.name       = 'axisRod';
+
+        mesh.material.emissiveIntensity = props.emIntensity;
+        grp.add( mesh );
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Ball
+        mesh = new THREE.Mesh( 
+            new THREE.SphereGeometry( props.ballRadius, 12, 12 ), 
+            new THREE.MeshToonMaterial({color:props.colors[ axis ]} ),
+        );
+        mesh.position.x = props.axisRadius * pos[0];
+        mesh.position.y = props.axisRadius * pos[1];
+        mesh.position.z = props.axisRadius * pos[2];
+        mesh.userData   = { axis, norm:pos };
+        mesh.name       = 'axisBall';
+
+        mesh.material.emissiveIntensity = props.emIntensity;
+        grp.add( mesh );
+    };
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // CENTER SPHERE
+    mesh = new THREE.Mesh( 
+        new THREE.SphereGeometry( props.centerRadius, 12, 12 ), 
+        new THREE.MeshToonMaterial({color:props.colors[6]} ),
+    );
+    grp.add( mesh );
+
+    // AXES
+    fn( 0, [1,0,0],  [0,0,Math.PI*0.5] );
+    fn( 1, [0,1,0], [0,0,0] );
+    fn( 2, [0,0,1], [Math.PI*0.5,0,0] );
+
+    if( props.incNegitive ){
+        fn( 3, [-1,0,0], [0,0,Math.PI*0.5] );
+        fn( 4, [0,-1,0], [0,0,0] );
+        fn( 5, [0,0,-1], [Math.PI*0.5,0,0] );
+    }
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Attach methods
+    grp.highLightAxis = ( axis )=>{
+        for( const mesh of grp.children ){
+            if( mesh.userData ){
+                mesh.material.emissive.set( ( mesh.userData.axis === axis )? props.emColor : 0x000000 );
+            }
+        }
+    };
+
+    return grp;
+}
+
+class RayCasting{
+    caster       = new THREE.Raycaster();
+    pos          = new THREE.Vector2();
+    ndc          = new THREE.Vector2();
+    viewSize     = new THREE.Vector2();
+    mouseCoord   = [0,0];
+    camera       = null;
+    renderer     = null;
+    isMouseDown  = false;
+    onMouseDown  = null;
+    onMouseHover = null;
+    onMouseUp    = null;
+
+    rectClamp    = {
+        x: -1,
+        y: -1,
+        w: -1,
+        h: -1,
+    };
+
+    constructor( camera, renderer ){
+        this.camera   = camera;
+        this.renderer = renderer;
+    }
+
+    _onPointerDown = ( e )=>{
+        this.isMouseDown = true;
+        if( this.onMouseDown ){
+            this.updateCoord( e );
+            this.updateRay();
+            this.onMouseDown( e, this );
+        }
+    };
+
+    _onPointerMove = ( e )=>{
+        if( !this.isMouseDown && this.onMouseHover ){
+            this.updateCoord( e );
+            if( this.pos.x === -1 ) return;
+
+            // console.log( this.pos.toArray(), this.ndc.toArray() );
+
+            this.updateRay();
+            this.onMouseHover( e, this );
+        }
+    };
+
+    _onPointerUp  = ( e )=>{
+        this.isMouseDown = false;
+    };
+
+    enable(){
+        const can = this.renderer.domElement;
+        can.addEventListener( 'pointerdown', this._onPointerDown );
+        can.addEventListener( 'pointermove', this._onPointerMove );
+        can.addEventListener( 'pointerup',   this._onPointerUp );
+        return this;
+    }
+
+    disable(){
+        const can = this.renderer.domElement;
+        can.removeEventListener( 'pointerdown', this._onPointerDown );
+        can.removeEventListener( 'pointermove', this._onPointerMove );
+        can.removeEventListener( 'pointerup',   this._onPointerUp );
+        return this;
+    }
+
+    updateCoord( e ){
+        const box = this.renderer.domElement.getBoundingClientRect();
+
+        // Compute position over the canvas with its top/left corner as origin
+        this.pos.x = event.clientX - box.x;
+        this.pos.y = event.clientY - box.y;
+
+        if( this.rectClamp.x !== -1 ){
+            if(
+                this.pos.x >= this.rectClamp.x &&
+                this.pos.x <= this.rectClamp.x + this.rectClamp.w &&
+                this.pos.y >= this.rectClamp.y &&
+                this.pos.y <= this.rectClamp.y + this.rectClamp.h ){
+                
+                // Compute position as the rect slice of the viewport as the origin.
+                this.pos.x = this.pos.x - this.rectClamp.x;
+                this.pos.y = this.pos.y - this.rectClamp.y;
+
+                // Compute NDC screen coordinate clamped to a rect slice of the viewport
+                this.ndc.x =  ( this.pos.x / this.rectClamp.w ) * 2 - 1;
+                this.ndc.y = -( this.pos.y / this.rectClamp.h ) * 2 + 1;
+            }else{
+                this.pos.x = -1;
+                this.pos.y = -1;
+            }
+        }else{
+            // Compute NDC screen coordinate of mouse over canvas
+            this.renderer.getSize( this.viewSize );
+            this.ndc.x =  ( this.pos.x / this.viewSize.x ) * 2 - 1;
+            this.ndc.y = -( this.pos.y / this.viewSize.y ) * 2 + 1;
+        }
+    }
+
+    updateRay(){
+        this.caster.setFromCamera( this.ndc, this.camera );
+        return this;
+    }
+
+    inObjects( ary, checkChildren=false ){
+        return this.caster.intersectObjects( ary, checkChildren );
+    }
+}
+
+class ViewportRenderer{
+    // #region MAIN
+    rect = {
+        x : -1,
+        y : -1,
+        w : 100,
+        h : 100,
+    };
+
+    isTransparent = true;
+    xClamp        = 1; // 1 RIGHT, -1 LEFT
+    yClamp        = 1; // 1 TOP, -1 BOTTOM
+
+    renderer      = null;
+    scene         = new THREE.Scene();
+    camera        = new THREE.PerspectiveCamera( 45, 1, 0.01, 10 );
+    viewSize      = new THREE.Vector2();
+    // camera   = new THREE.OrthographicCamera( -2, 2, 2, -2, 0, 100 )
+
+    constructor( renderer ){
+        this.renderer = renderer;
+        this.camera.position.z = 4;
+
+        // if( !config.ortho ){
+        //     this.camera = new THREE.PerspectiveCamera( 45, ratio, 0.01, 1000 );
+        // }else{
+        //     let height  = config.ortho / 2;
+        //     let width   = config.ortho * ratio / 2;
+        //     this.camera = new THREE.OrthographicCamera( -width, width, height, -height, -2500, 2500 );
+        // }
+    }
+    // #endregion
+
+    // #region SETTERS
+    useDefaultLighting(){
+        const light = new THREE.DirectionalLight(0xffffff, 0.8);
+        light.position.set(4, 10, 1);
+        this.scene.add( light );
+
+        this.scene.add( new THREE.AmbientLight( 0x404040 ) );
+        return this;
+    }
+    // #endregion
+
+    // #region INNER
+    updateRect(){
+        this.renderer.getSize( this.viewSize );
+
+        switch( this.xClamp ){
+            case  1: this.rect.x = this.viewSize.x - this.rect.w; break;
+            case -1: this.rect.x = 0; break;
+        }
+
+        switch( this.yClamp ){
+            case  1: this.rect.y = this.viewSize.y - this.rect.h; break;
+            case -1: this.rect.y = 0; break;
+        }
+    }
+    // #endregion
+
+    // #region RENDERING
+    render( scene=null ){
+        const rend = this.renderer;
+        const rect = this.rect;
+        this.updateRect();
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Enable viewport rendering
+        rend.setViewport( rect.x, rect.y, rect.w, rect.h );
+        rend.setScissor(  rect.x, rect.y, rect.w, rect.h );
+        rend.setScissorTest( true );
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Render
+        // rend.setClearAlpha( 0 );
+        if( this.isTransparent ){
+            rend.autoClearColor = false;
+        }else{
+            rend.setClearColor( 0x909090 );
+        }
+
+        rend.render( scene || this.scene, this.camera );
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Reset back to normal rendering
+
+        if( this.isTransparent ) rend.autoClearColor = true;
+        else rend.setClearColor(0x303030);
+        
+        rend.setViewport( 0, 0, this.viewSize.x, this.viewSize.y );
+        rend.setScissorTest( false );
+    }
+    // #endregion
+}
+
+class OrientationGizmo{
+    constructor( camera, renderer ){
+        this.camera   = camera;
+        this.viewport = new ViewportRenderer( renderer ).useDefaultLighting();
+        
+        this.casting  = new RayCasting( this.viewport.camera, renderer ).enable();
+        this.casting.onMouseHover = this.onMouseHover;
+        this.casting.onMouseDown  = this.onMouseDown;
+
+        this.axes     = axesMesh( { incNegitive:true } );
+        this.viewport.scene.add( this.axes );
+    }
+
+    onMouseHover = ( e, ray )=>{
+        const hit = ray.inObjects( this.axes.children );
+        if( hit.length === 0 || hit[0].object.name === '' ){
+            this.axes.highLightAxis( -1 );
+            return;
+        }
+
+        const obj = hit[0].object;
+        this.axes.highLightAxis( obj.userData.axis );
+    };
+
+    onMouseDown = ( e, ray )=>{
+        const hit = ray.inObjects( this.axes.children );
+        if( hit.length === 0 || !hit[0].object?.userData?.norm ) return;
+
+        const obj = hit[0].object;
+        console.log( obj.name, obj.userData.axis, obj.userData.norm );
+    };
+
+    update(){
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Rotate axes to match camera
+        const q = this.camera.quaternion.clone();
+        q.invert();
+        this.axes.quaternion.copy( q );
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        this.viewport.render();
+        
+        this.casting.rectClamp.x = this.viewport.rect.x;
+        this.casting.rectClamp.y = this.viewport.viewSize.y - (this.viewport.rect.y + this.viewport.rect.h);
+        this.casting.rectClamp.w = this.viewport.rect.w;
+        this.casting.rectClamp.h = this.viewport.rect.h;
+    }
+}
+
+</script></body></html>
