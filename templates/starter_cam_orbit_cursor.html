@@ -45,6 +45,7 @@ import {
     zoomTarget, 
     lookAt,
     panStepXZ,
+    screenPanStep,
 } from '../lib/camera/CameraMovements.js';
 
 const AXES = {
@@ -76,6 +77,7 @@ const AXES = {
 
 
 class OrbitCursor{
+    // #region MAIN
     cursorMesh    = null;
     targetPos     = [0,0,0];
     camera        = null;
@@ -94,6 +96,7 @@ class OrbitCursor{
     initTarget    = [0,0,0];    // Cache target positition
     initPos       = [0,0,0];    // Cache camera position
     initRot       = [0,0,0,1];  // Cache camera rotation
+    initBtn       = 0;
 
     constructor( camera, renderer ){
         this.cursorMesh = CursorMesh();
@@ -117,8 +120,9 @@ class OrbitCursor{
 
         return this;
     }
+    // #endregion
 
-    // #region Camera Controls
+    // #region CAMERA CONTROLS
     setTargetDistance( v ){
         const pos = zoomTarget( this.getCameraPos(), this.targetPos, v );
         this.setPosition( pos );
@@ -177,6 +181,17 @@ class OrbitCursor{
 
         this.setTarget( pos );
         return this
+    }
+
+    stepScreenPan( dx, dy, startPos=this.targetPos.slice() ){
+        let dist  = vec3.dist( this.getCameraPos(), startPos ); //dist  = vec3.dist( this.getCameraPos(), this.targetPos );
+            dist *= Math.tan( ( this.camera.getEffectiveFOV() * 0.5 ) * 0.01745329251 );
+
+        const x   = dx * this.stepScale * dist / this.canvas.clientHeight;
+        const y   = dy * this.stepScale * dist / this.canvas.clientHeight;        
+        const pos = screenPanStep( this.camera, x, y, startPos );
+
+        this.setTarget( pos );
     }
 
     getCameraPos(){ return this.camera.position.toArray(); }
@@ -240,15 +255,28 @@ class OrbitCursor{
         this.initPos    = this.getCameraPos();
         this.initRot    = this.getCameraRot();
         this.initTarget = this.targetPos.slice();
+        this.initBtn    = e.button; // Can't get button number during pointer_move, save it on down
         return true;
     };
 
     onPointerMove  = ( e, coord, delta, vel )=>{
-        if( e.shiftKey ){
-            this.stepXZ( -delta[0], delta[1], this.initTarget );
-        }else{
-            // Orbit around the target
-            this.stepOrbit( -delta[0], delta[1], 2.0, 1.0, this.initPos );
+        switch( this.initBtn ){
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            // LEFT CLICK
+            case 0:
+                if( e.shiftKey ){
+                    this.stepXZ( -delta[0], delta[1], this.initTarget );
+                }else{
+                    // Orbit around the target
+                    this.stepOrbit( -delta[0], delta[1], 2.0, 1.0, this.initPos );
+                }
+                break;
+
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            // RIGHT CLICK
+            case 2:
+                this.stepScreenPan( -delta[0], delta[1], this.initTarget );
+                break;
         }
     };
     // #endregion
@@ -259,8 +287,12 @@ class OrbitCursor{
         // Movement
         const move = this.kboardHandler.getWASDAxes();
 
-        if( move[0] || move[1] ) this.stepXZ( move[0] * this.kbStep, move[1] * this.kbStep );
-        if( move[2] )            this.stepY( -move[2] * this.kbStep );
+        if( !e.shiftKey ){
+            if( move[0] || move[1] ) this.stepXZ( move[0] * this.kbStep, move[1] * this.kbStep );
+            if( move[2] )            this.stepY( -move[2] * this.kbStep );
+        }else{
+            if( move[0] || move[1] ) this.stepScreenPan( move[0] * this.kbStep, move[1] * this.kbStep );
+        }
 
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         // Orbit
