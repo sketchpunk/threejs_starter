@@ -1,0 +1,221 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }     from '../lib/Starter.js';
+import facedCube 			  from '../lib/meshes/FacedCube.js';
+import { vec3, mat4 }         from 'gl-matrix';
+
+let App;
+let Ref = {
+};
+
+// https://codesandbox.io/s/r3f-camera-perspective-ortho-animated-transition-v1-forked-8uvue
+
+// https://twitter.com/FreyaHolmer/status/1658125337849372675?s=20
+// https://www.desmos.com/calculator/jp9lx72oiz
+
+
+window.addEventListener( "load", async _=>{
+	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	App = new Starter( { webgl2:false, grid:true, orbit:true, ortho:false } );
+	App.setCamera(45, 20, 5, [0, 0, 0] );
+    // App.onRender = ()=>{
+    //     console.log( App.camera.position.toArray() );
+    // }
+
+    Ref.perp = App.camera;
+    Ref.orth = new THREE.OrthographicCamera( -1, 1, 1, -1, -1, 2000 );
+    // orth.rotation.reorder( 'YXZ' );
+
+    
+
+    // App.camera          = Ref.orth;
+    // App.orbit.object   = Ref.orth;
+    // App.orbit.update();
+    // App.orbit.reset();
+
+    // App.camera.zoom = 1/4;
+    // App.camera.position.set( -20, 10, 0 );
+    // App.camera.quaternion.fromArray( lookAt( [0,0,0,0], App.camera.position.toArray(), [0,0,0], [0,1,0] ) );
+    // // App.camera.rotation.y = -5 * Math.PI / 180;
+    // App.camera.rotation.x = -0.4636476090008062;
+    // App.camera.updateProjectionMatrix();
+
+    // fakeOrth();
+
+    // perp2orth();
+    // App.camera          = Ref.orth;
+    // App.orbit.object   = Ref.orth;
+    // App.orbit.update();
+    // App.orbit.reset();
+
+    console.log( Ref.orth.position );
+
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const m = facedCube();
+    App.add( m );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.render();
+
+    uiSetup();
+});
+
+function uiSetup(){
+    document.getElementById( 'btnTog' ).addEventListener( 'click', e=>toggle() );
+}
+
+function setCameraFov( v ){
+
+    App.camera.fov = v;
+    App.camera.updateProjectionMatrix();
+
+}
+
+function perp2orth(){
+
+    const size      = App.getRendererSize();
+    const distance  = Ref.perp.position.length();
+
+
+    // perspective projection parameters
+    const fov       = Ref.perp.fov * Math.PI / 180;
+    const aspect    = size[0] / size[1];
+    // const near      = Ref.perp.near;
+    // const far       = Ref.perp.far;
+
+    const halfHeight = distance * Math.tan( fov / 2 );
+    const halfWidth  = aspect * halfHeight;
+
+    // Compute orthographic projection parameters.
+    const projLft   = -halfWidth
+    const projRit   =  halfWidth;
+    const projBot   = -halfHeight;
+    const projTop   = halfHeight;
+    const near      = distance - halfHeight;
+    const far       = distance + halfHeight;
+
+    Ref.orth.bottom = projBot;
+    Ref.orth.left   = projLft;
+    Ref.orth.right  = projRit;
+    Ref.orth.top    = projTop;
+    Ref.orth.zoom   = distance / halfHeight;
+    Ref.orth.near   = near;
+    Ref.orth.far    = far;
+
+    console.log(  Ref.orth.zoom );
+
+    Ref.orth.position.copy( Ref.perp.position );
+    Ref.orth.quaternion.copy( Ref.perp.quaternion );
+
+    Ref.orth.updateProjectionMatrix();
+
+
+// // Assume that you have an existing perspective projection matrix, projPerspective,
+// // and you want to create a matching orthographic projection matrix, projOrtho.
+
+// // Get the width and height of the viewport.
+// const width = canvas.width;
+// const height = canvas.height;
+
+// // Get the perspective projection parameters.
+// const fov = Math.PI / 4; // field of view in radians
+// const aspect = width / height; // aspect ratio of the viewport
+// const near = 0.1; // near clipping plane
+// const far = 1000.0; // far clipping plane
+
+// // Compute the corresponding orthographic projection parameters.
+// const projLeft = -aspect * near * Math.tan(fov / 2);
+// const projRight = aspect * near * Math.tan(fov / 2);
+// const projBottom = -near * Math.tan(fov / 2);
+// const projTop = near * Math.tan(fov / 2);
+
+// // Create the orthographic projection matrix.
+// const projOrtho = mat4.ortho(projLeft, projRight, projBottom, projTop, near, far);
+
+}
+
+function fakeOrthGOOD(){
+    const dist   = App.camera.position.length();
+
+    let newDist = dist / Math.tan( ( 12.5 ) * Math.PI / 180); // Half - half * 0.7142?
+
+    const pos     = App.camera.position.toArray();
+    vec3.normalize( pos, pos );
+    vec3.scale( pos, pos, newDist );
+
+    App.camera.position.fromArray( pos );
+    App.camera.fov = 10;
+    App.camera.updateProjectionMatrix();
+}
+
+function undofakeOrthGood(){
+    const dist = App.camera.position.length();
+    let newDist = dist / Math.tan( ( 78 ) * Math.PI / 180);
+    
+    const pos     = App.camera.position.toArray();
+    vec3.normalize( pos, pos );
+    vec3.scale( pos, pos, newDist );
+
+    App.camera.position.fromArray( pos );
+    App.camera.fov = 45;
+    App.camera.updateProjectionMatrix();
+}
+
+
+function fakeOrth(){
+    const FROM = 100;
+    const TO   = 10;
+    
+    const toRad  = Math.PI / 180;
+    const dist   = App.camera.position.length();
+    let newDist = dist * Math.tan( (FROM/2) * toRad ) / Math.tan( (TO/2) * toRad );
+
+    const pos    = App.camera.position.toArray();    
+    vec3.normalize( pos, pos );
+    vec3.scale( pos, pos, newDist );
+
+    App.camera.position.fromArray( pos );
+    App.camera.fov = TO;
+    App.camera.updateProjectionMatrix();
+}
+
+function undofakeOrth(){
+    const FROM = 10;
+    const TO   = 100;
+
+    const toRad  = Math.PI / 180;
+    const dist   = App.camera.position.length();
+    
+    let newDist = dist * Math.tan( (FROM/2) * toRad ) / Math.tan( (TO/2) * toRad );
+
+    const pos     = App.camera.position.toArray();
+    vec3.normalize( pos, pos );
+    vec3.scale( pos, pos, newDist );
+
+    App.camera.position.fromArray( pos );
+    App.camera.fov = TO;
+    App.camera.updateProjectionMatrix();
+}
+
+
+function toggle(){
+    const scl = 4.1;
+
+    if( Ref.isA ){
+        Ref.isA = false;
+        undofakeOrth()
+        console.log( 'isA' );
+
+    }else{
+        Ref.isA = true;
+        fakeOrth();
+        console.log( 'isNotA' );
+    }
+}
+
+</script>
+
+<div style="position:fixed; bottom:10px; left:10px;">
+    <button id="btnTog">Toggle</button>
+</div>
+</body></html>

@@ -1,6 +1,6 @@
 <!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
 import Starter, { THREE }    from '../lib/Starter.js';
-
+import facedCube 			 from '../lib/meshes/FacedCube.js';
 
 let App;
 let Ref = {};
@@ -25,6 +25,9 @@ window.addEventListener( "load", _=>{
 
     // Ref.oGizmo = new OrientationGizmo( App.camera, App.renderer );
 
+    App.add( facedCube() );
+    
+
     Ref.ctrl = new OrbitCursor( App.camera, App.renderer );
     App.add( Ref.ctrl.cursorMesh );
 
@@ -33,7 +36,21 @@ window.addEventListener( "load", _=>{
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // App.onRenderPost = onRenderPost;
     App.render();
+    uiSetup();
 });
+
+function uiSetup(){
+    document.getElementById( 'inpFov' ).addEventListener( 'input', e=>{
+        const v = parseInt( e.target.value );
+        Ref.ctrl.setFov( v );
+    });
+
+    document.getElementById( 'btnTog' ).addEventListener( 'click', e=>{
+        Ref.ctrl.useOrtho( !Ref.ctrl.isOrtho );
+    });
+}
+
+
 
 import CursorMesh             from '../lib/meshes/CursorMesh.js';
 import { vec3, quat }         from 'gl-matrix';
@@ -98,8 +115,12 @@ class OrbitCursor{
     initRot       = [0,0,0,1];  // Cache camera rotation
     initBtn       = 0;
 
+    orthoFov      = 10;
+    perspFov      = 45;
+    isOrtho       = false;
+
     constructor( camera, renderer ){
-        this.cursorMesh = CursorMesh();
+        this.cursorMesh = CursorMesh( 0.05 );
 
         if( camera && renderer ) this.init( camera, renderer );
     }
@@ -119,6 +140,61 @@ class OrbitCursor{
         this.kboardHandler.onKeyDown = this.onKeyDown;
 
         return this;
+    }
+    // #endregion
+
+    // #region FIELD OF VIEW
+    setFov( f ){
+        if( this.isOrtho ) this.isOrtho = false;
+        this.perspFov = f;
+        this.switchFov( f );
+        return this;
+    }
+
+    useOrtho( b ){
+        if( this.isOrtho ){
+            this.switchFov( this.perspFov );
+            this.isOrtho = false;
+        }else{
+            this.switchFov( this.orthoFov );
+            this.isOrtho = true;
+        }
+        return this;
+    }
+
+    switchFov( toFov ){
+        const toRad     = Math.PI / 180;
+        const camPos    = this.camera.position.toArray();
+        const dir       = vec3.sub( [0,0,0], camPos, this.targetPos );
+        const dist      = vec3.len( dir );
+        const scl       = Math.tan( this.camera.fov * 0.5 * toRad ) / 
+                          Math.tan( toFov * 0.5 * toRad );
+
+        vec3.normalize( dir, dir );
+        vec3.scaleAndAdd( camPos, this.targetPos, dir, dist * scl );
+
+        this.camera.fov = toFov;
+        this.camera.position.fromArray( camPos );
+        this.camera.updateProjectionMatrix();
+
+        // Invert scale seems to work on the cursor's factor.
+        this.cursorMesh.setFactor( this.cursorMesh.getFactor() *  (1 / scl) );
+
+        // const FROM = 10;
+        // const TO   = 100;
+
+        // const toRad  = Math.PI / 180;
+        // const dist   = App.camera.position.length();
+        
+        // let newDist = dist * Math.tan( (FROM/2) * toRad ) / Math.tan( (TO/2) * toRad );
+
+        // const pos     = App.camera.position.toArray();
+        // vec3.normalize( pos, pos );
+        // vec3.scale( pos, pos, newDist );
+
+        // App.camera.position.fromArray( pos );
+        // App.camera.fov = TO;
+        // App.camera.updateProjectionMatrix();
     }
     // #endregion
 
@@ -314,4 +390,10 @@ class OrbitCursor{
     // #endregion
 }
 
-</script></body></html>
+</script>
+
+<div style="position:fixed; bottom:10px; left:10px;">
+    <input id="inpFov" type="range" value="45" min="10" max="140" step="5"><br>
+    <button id="btnTog">Toggle</button>
+</div>
+</body></html>

@@ -70,12 +70,13 @@ function onRenderPost( dt, et ){
 }
 
 function onPointerDown( e, pos ){
-    console.log( pos );
+    // console.log( pos );
+    return true;
 }
 
 const target = [0,0,0];
 function onPointerMove( e, coord, delta, vel ){
-    // console.log( vel );
+    console.log( vel );
 
     const c = App.camera;
 
@@ -101,17 +102,17 @@ function onPointerMove( e, coord, delta, vel ){
         c.quaternion.fromArray( lookAt( [0,0,0,0], pos, target, [0,1,0] ) );
     }
 
-
     // deltaX * ( scope.object.right - scope.object.left ) / scope.object.zoom / element.clientWidth
-
 }
 
 
-function onPointerWheel( e, tick ){
+function onPointerWheel( e, deltaX, deltaY ){
     const c = App.camera;
-    
+
+    console.log( deltaY, e );
+
     const zFactor = 0.95;
-    const z = ( tick < 0 )? c.zoom / zFactor : c.zoom * zFactor;
+    const z = ( deltaY < 0 )? c.zoom / zFactor : c.zoom * zFactor;
 
 
     console.log( z );

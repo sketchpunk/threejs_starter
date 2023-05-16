@@ -1,0 +1,161 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }     from '../lib/Starter.js';
+import facedCube 			  from '../lib/meshes/FacedCube.js';
+import { vec3 }               from 'gl-matrix';
+
+let App;
+let Ref = {
+};
+
+// https://codesandbox.io/s/r3f-camera-perspective-ortho-animated-transition-v1-forked-8uvue
+
+window.addEventListener( "load", async _=>{
+	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	App = new Starter( { webgl2:false, grid:true, orbit:true, ortho:false } );
+	App.setCamera( 45, 20, 7, [0, 0, 0] );
+
+    Ref.perp = App.camera;
+    Ref.orth = new THREE.OrthographicCamera( -1, 1, 1, -1, -1, 2000 );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const m = facedCube();
+    App.add( m );
+
+
+
+
+
+    // mat4 persp = perspective(60.0f, width / height, 0.1f, 500.0f);
+    // float size = length(targetPos - cameraPos) * tanf(60.0f / 2.0f * DEG2RAD);
+    // mat4 ortho = orthographic(-size, size, size, -size, 0.1f, 500.0f);
+
+    // App.camera         = Ref.orth;
+    // App.orbit.object   = Ref.orth;
+    // App.orbit.update();
+    // App.orbit.reset();
+
+    // App.camera.zoom = 1/4;
+    // App.camera.position.set( -20, 10, 0 );
+    // App.camera.quaternion.fromArray( lookAt( [0,0,0,0], App.camera.position.toArray(), [0,0,0], [0,1,0] ) );
+    // // App.camera.rotation.y = -5 * Math.PI / 180;
+    // App.camera.rotation.x = -0.4636476090008062;
+    // App.camera.updateProjectionMatrix();
+
+    // fakeOrth();
+
+    // perp2orth();
+    // App.camera          = Ref.orth;
+    // App.orbit.object   = Ref.orth;
+    // App.orbit.update();
+    // App.orbit.reset();
+
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.render();
+    uiSetup();
+});
+
+function uiSetup(){
+    // document.getElementById( 'inpFov' ).addEventListener( 'input', e=>{
+    // });
+
+    document.getElementById( 'btnTog' ).addEventListener( 'click', e=>toggle() );
+}
+
+function setCameraFov( v ){
+
+    // let d = calculateNewDistance( App.camera.position.z, App.camera.fov, v, 35, 50 );
+    // d = App.camera.position.z * 1 / d;
+
+    App.camera.fov = v;
+    App.camera.updateProjectionMatrix();
+
+    // App.setCamera( 0, 0, d, [0, 0, 0] );
+
+    // console.log( App.camera.position.z );
+
+    
+
+    // const d = 5.0 * ( 1 / Math.tan( ( v * 0.5 ) * 0.01745329251 ) );
+    
+    // const d = ( 1 / Math.atan( (App.camera.getFilmHeight()/2) / App.camera.getFocalLength()) * 180 / Math.PI );
+
+    // const dist = 5.0;
+    // const d = dist * ( App.camera.getFocalLength() / ( App.camera.getFocalLength() + dist) );
+
+    // const d =  5.0 / (2 * Math.tan(Math.PI * App.camera.fov / 360));
+
+    // const newFL = App.camera.getFocalLength();
+    // const d     = 5.0 * ( newFL / Ref.fl45 );
+
+    // App.setCamera( 0, 0, d, [0, 0, 0] );
+
+    // const extent = Math.tan( ( v * 0.5 ) * 0.01745329251 );
+    // console.log( 'FOV', v,  'FocalLen', App.camera.getFocalLength(), 'Extent', extent  );
+}
+
+function calculateNewDistance(distance, oldFov, newFov, sensorSize, focalLength) {
+  const oldFocalLength = sensorSize / (2 * Math.tan((Math.PI * oldFov) / 360));
+  const newFocalLength = sensorSize / (2 * Math.tan((Math.PI * newFov) / 360));
+  const scaleFactor = oldFocalLength / newFocalLength;
+  const newDistance = distance / scaleFactor;
+  return newDistance;
+}
+
+function toOrth(){
+    const cam       = Ref.perp;
+    const TORAD     = Math.PI/180;
+    const size      = App.getRendererSize();
+    const aspect    = size[0] / size[1];
+    const camPos    = cam.position.toArray();
+    const height    = 2 * Math.tan( cam.fov / 2 * TORAD ) * vec3.len( camPos );
+    const width     = height * aspect;
+
+    Ref.orth.left    = -width  * 0.5;
+    Ref.orth.right   =  width  * 0.5;
+    Ref.orth.top     =  height * 0.5;
+    Ref.orth.bottom  = -height * 0.5;
+    Ref.orth.near    = -10; // There is some clipping, -1 works ok, -10 better
+    Ref.orth.far     = cam.far;
+    Ref.orth.zoom    = 1;
+
+    Ref.orth.position.copy( cam.position );
+    Ref.orth.quaternion.copy( cam.quaternion );
+    Ref.orth.updateProjectionMatrix();
+
+    App.camera       = Ref.orth;
+    App.orbit.object = Ref.orth;
+}
+
+function toPersp(){
+    const cam       = Ref.orth;
+    const camPos    = cam.position.toArray();
+    const distance  = vec3.len( camPos ) * ( 1 / cam.zoom );
+    const dir       = vec3.normalize( [0,0,0], camPos );
+
+    vec3.scale( camPos, dir, distance );
+
+    Ref.perp.position.fromArray( camPos );
+    Ref.perp.quaternion.copy( cam.quaternion );
+    Ref.perp.updateProjectionMatrix();
+
+    App.camera       = Ref.perp;
+    App.orbit.object = Ref.perp;
+}
+
+function toggle(){
+    if( Ref.isA ){
+        Ref.isA = false;
+        toPersp();
+    }else{
+        Ref.isA = true;
+        toOrth();
+    }
+}
+
+</script>
+
+<div style="position:fixed; bottom:10px; left:10px;">
+    <button id="btnTog">Toggle</button>
+</div>
+</body></html>
