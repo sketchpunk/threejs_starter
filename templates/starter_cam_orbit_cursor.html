@@ -7,8 +7,13 @@ let Ref = {};
 
 window.addEventListener( "load", _=>{
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    App = new Starter( { webgl2:false, grid:true, orbit:false } );
-    App.setCamera( 0, 20, 6 ); //.render();
+    App = new Starter( { webgl2:false, grid:true, orbit:false, ortho:50 } );
+    // App.setCamera( 0, 20, 10 ); //.render();
+    
+    if( App.camera.isOrthographicCamera ){
+        // App.camera.zoom = 1/4;
+        // App.camera.updateProjectionMatrix();
+    }
 
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // const axes = axesMesh( { incNegitive:true } );
@@ -28,10 +33,12 @@ window.addEventListener( "load", _=>{
     App.add( facedCube() );
     
 
-    Ref.ctrl = new OrbitCursor( App.camera, App.renderer );
+    Ref.ctrl = new OrbitCursor( App.renderer );
     App.add( Ref.ctrl.cursorMesh );
+    Ref.ctrl.setSpherical( 0, 20, 5 );
+    // Ref.ctrl.updateLook();
 
-    Ref.ctrl.updateLook();
+    App.camera = Ref.ctrl.camera;
 
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // App.onRenderPost = onRenderPost;
@@ -47,6 +54,8 @@ function uiSetup(){
 
     document.getElementById( 'btnTog' ).addEventListener( 'click', e=>{
         Ref.ctrl.useOrtho( !Ref.ctrl.isOrtho );
+
+        App.camera = Ref.ctrl.camera;
     });
 }
 
@@ -63,6 +72,7 @@ import {
     lookAt,
     panStepXZ,
     screenPanStep,
+    sphericalLook,
 } from '../lib/camera/CameraMovements.js';
 
 const AXES = {
@@ -97,7 +107,7 @@ class OrbitCursor{
     // #region MAIN
     cursorMesh    = null;
     targetPos     = [0,0,0];
-    camera        = null;
+    camera        = null;       // Active Camera
     canvas        = null;
     mouseHandler  = null;
     kboardHandler = null;
@@ -115,19 +125,27 @@ class OrbitCursor{
     initRot       = [0,0,0,1];  // Cache camera rotation
     initBtn       = 0;
 
-    orthoFov      = 10;
     perspFov      = 45;
-    isOrtho       = false;
 
-    constructor( camera, renderer ){
+    camPerspective  = new THREE.PerspectiveCamera( this.perspFov, 1, 0.01, 1000 );
+    camOrthographic = new THREE.OrthographicCamera( -1, 1, 1, -1, -10, 1000 );
+
+    constructor( renderer ){
         this.cursorMesh = CursorMesh( 0.05 );
+        this.camera     = this.camPerspective;
 
-        if( camera && renderer ) this.init( camera, renderer );
+        this.camPerspective.rotation.reorder('YXZ');
+        this.camOrthographic.rotation.reorder('YXZ');
+
+        if( renderer ) this.init( renderer );
     }
 
-    init( camera, renderer ){
+    init( renderer ){
         this.canvas = renderer.domElement;
-        this.camera = camera;
+
+        // Setup Perspective Camera
+        this.camera.aspect = this.canvas.clientWidth / this.canvas.clientHeight;
+        this.camera.updateProjectionMatrix();
 
         // Setup Mouse Events
         this.mouseHandler = new CanvasPointerHandlers( this.canvas ).enable()
@@ -143,62 +161,143 @@ class OrbitCursor{
     }
     // #endregion
 
+    // #region ORTHOGRAPHIC
+    get isOrtho(){ return !!this.camera.isOrthographicCamera; }
+
+    useOrtho( turnOn ){
+        if( turnOn && !this.camera.isOrthographicCamera )      this.perp2orth();
+        else if( !turnOn && this.camera.isOrthographicCamera ) this.orth2perp();
+        return this;
+    }
+
+    // Switch from perspective to orthographic
+    perp2orth(){
+        // const cam       = Ref.perp;
+        // const TORAD     = Math.PI/180;
+        // const size      = App.getRendererSize();
+        // const aspect    = size[0] / size[1];
+        // const camPos    = cam.position.toArray();
+        // const height    = 2 * Math.tan( cam.fov / 2 * TORAD ) * vec3.len( camPos );
+        // const width     = height * aspect;
+
+        // Ref.orth.left    = -width  * 0.5;
+        // Ref.orth.right   =  width  * 0.5;
+        // Ref.orth.top     =  height * 0.5;
+        // Ref.orth.bottom  = -height * 0.5;
+        // Ref.orth.near    = -10; // There is some clipping, -1 works ok, -10 better
+        // Ref.orth.far     = cam.far;
+        // Ref.orth.zoom    = 1;
+
+        // Ref.orth.position.copy( cam.position );
+        // Ref.orth.quaternion.copy( cam.quaternion );
+        // Ref.orth.updateProjectionMatrix();
+
+        // App.camera       = Ref.orth;
+        // App.orbit.object = Ref.orth;
+
+        const pCam      = this.camPerspective;
+        const oCam      = this.camOrthographic;
+        const toRad     = Math.PI / 180;
+        const aspect    = this.canvas.clientWidth / this.canvas.clientHeight;
+        const camPos    = pCam.position.toArray();
+
+        const height    = 2 * Math.tan( pCam.fov * 0.5 * toRad ) * vec3.dist( camPos, this.targetPos );
+        const width     = height * aspect;
+
+        oCam.left       = -width  * 0.5;
+        oCam.right      =  width  * 0.5;
+        oCam.top        =  height * 0.5;
+        oCam.bottom     = -height * 0.5;
+        oCam.near       = -10; // There is some clipping, -1 works ok, -10 better
+        oCam.far        = pCam.far;
+        oCam.zoom       = 1;
+
+        oCam.position.copy( pCam.position );
+        oCam.quaternion.copy( pCam.quaternion );
+        oCam.updateProjectionMatrix();
+
+        this.camera = this.camOrthographic;
+    }
+
+    // Switch from orthographic to perspective 
+    orth2perp(){
+        // const cam       = Ref.orth;
+        // const camPos    = cam.position.toArray();
+        // const distance  = vec3.len( camPos ) * ( 1 / cam.zoom );
+        // const dir       = vec3.normalize( [0,0,0], camPos );
+
+        // vec3.scale( camPos, dir, distance );
+
+        // Ref.perp.position.fromArray( camPos );
+        // Ref.perp.quaternion.copy( cam.quaternion );
+        // Ref.perp.updateProjectionMatrix();
+
+        // App.camera       = Ref.perp;
+        // App.orbit.object = Ref.perp;
+
+        const pCam      = this.camPerspective;
+        const oCam      = this.camOrthographic;
+        const camPos    = oCam.position.toArray();
+        const dir       = vec3.sub( [0,0,0], camPos, this.targetPos );
+        const distance  = vec3.len( dir ) * ( 1 / oCam.zoom );
+
+        vec3.normalize( dir, dir );
+        vec3.scaleAndAdd( camPos, this.targetPos, dir, distance );
+
+        pCam.position.fromArray( camPos );
+        pCam.quaternion.copy( oCam.quaternion );
+
+        this.camera = this.camPerspective;
+    }
+
+    getOrthoHScale(){
+        const c = this.camera;
+        return ( c.top - c.bottom ) / c.zoom / this.canvas.clientHeight
+    }
+    
+    getOrthoWScale(){
+        const c = this.camera;
+        return ( c.right - c.left ) / c.zoom / this.canvas.clientWidth;
+    }
+    // #endregion
+
     // #region FIELD OF VIEW
     setFov( f ){
-        if( this.isOrtho ) this.isOrtho = false;
         this.perspFov = f;
         this.switchFov( f );
         return this;
     }
 
-    useOrtho( b ){
-        if( this.isOrtho ){
-            this.switchFov( this.perspFov );
-            this.isOrtho = false;
-        }else{
-            this.switchFov( this.orthoFov );
-            this.isOrtho = true;
-        }
-        return this;
-    }
-
     switchFov( toFov ){
+        const cam       = this.camPerspective;
         const toRad     = Math.PI / 180;
-        const camPos    = this.camera.position.toArray();
+        const camPos    = cam.position.toArray();
         const dir       = vec3.sub( [0,0,0], camPos, this.targetPos );
         const dist      = vec3.len( dir );
-        const scl       = Math.tan( this.camera.fov * 0.5 * toRad ) / 
+        const scl       = Math.tan( cam.fov * 0.5 * toRad ) / 
                           Math.tan( toFov * 0.5 * toRad );
 
         vec3.normalize( dir, dir );
         vec3.scaleAndAdd( camPos, this.targetPos, dir, dist * scl );
 
-        this.camera.fov = toFov;
-        this.camera.position.fromArray( camPos );
-        this.camera.updateProjectionMatrix();
+        cam.fov = toFov;
+        cam.position.fromArray( camPos );
+        cam.updateProjectionMatrix();
 
         // Invert scale seems to work on the cursor's factor.
         this.cursorMesh.setFactor( this.cursorMesh.getFactor() *  (1 / scl) );
-
-        // const FROM = 10;
-        // const TO   = 100;
-
-        // const toRad  = Math.PI / 180;
-        // const dist   = App.camera.position.length();
-        
-        // let newDist = dist * Math.tan( (FROM/2) * toRad ) / Math.tan( (TO/2) * toRad );
-
-        // const pos     = App.camera.position.toArray();
-        // vec3.normalize( pos, pos );
-        // vec3.scale( pos, pos, newDist );
-
-        // App.camera.position.fromArray( pos );
-        // App.camera.fov = TO;
-        // App.camera.updateProjectionMatrix();
     }
     // #endregion
 
     // #region CAMERA CONTROLS
+    setSpherical( lon, lat, radius=0 ){
+        if( radius === 0 ) radius = vec3.dist( this.camera.position.toArray(), this.targetPos );
+        const [ pos ] = sphericalLook( lon, lat, radius );
+        this.camera.position.fromArray( pos );
+        this.updateLook();
+        return this;
+    }
+
     setTargetDistance( v ){
         const pos = zoomTarget( this.getCameraPos(), this.targetPos, v );
         this.setPosition( pos );
@@ -234,21 +333,27 @@ class OrbitCursor{
     }
 
     stepXZ( dx, dz, startPos=this.targetPos.slice() ){
-        let dist  = vec3.dist( this.getCameraPos(), this.targetPos );
-            dist *= Math.tan( ( this.camera.getEffectiveFOV() * 0.5 ) * 0.01745329251 );
+        let x = 0;
+        let z = 0;
 
-        const x   = dx * this.stepScale * dist / this.canvas.clientHeight;
-        const z   = dz * this.stepScale * dist / this.canvas.clientHeight;        
+        if( !this.camera.isOrthographicCamera ){
+            const scl = this.getProjDistScale();
+            x         = dx * this.stepScale * scl;
+            z         = dz * this.stepScale * scl;        
+        }else{
+            x = dx * this.getOrthoWScale();
+            z = dz * this.getOrthoHScale();
+        }
+
         const pos = panStepXZ( this.camera, x, z, startPos );
-
         this.setTarget( pos );
     }
 
     stepY( dy ){
-        let dist  = vec3.dist( this.getCameraPos(), this.targetPos );
-            dist *= Math.tan( ( this.camera.getEffectiveFOV() * 0.5 ) * 0.01745329251 );
+        const y = ( !this.camera.isOrthographicCamera )
+            ? dy * this.stepScale * this.getProjDistScale()
+            : dy * this.getOrthoHScale();
 
-        const y   = dy * this.stepScale * dist / this.canvas.clientHeight;
         const pos = [
             this.targetPos[0],
             this.targetPos[1] + y,
@@ -260,13 +365,18 @@ class OrbitCursor{
     }
 
     stepScreenPan( dx, dy, startPos=this.targetPos.slice() ){
-        let dist  = vec3.dist( this.getCameraPos(), startPos ); //dist  = vec3.dist( this.getCameraPos(), this.targetPos );
-            dist *= Math.tan( ( this.camera.getEffectiveFOV() * 0.5 ) * 0.01745329251 );
+        let x = 0;
+        let y = 0;
+        if( !this.camera.isOrthographicCamera ){
+            const scl = this.getProjDistScale( startPos );
+            x = dx * this.stepScale * scl;
+            y = dy * this.stepScale * scl;    
+        }else{
+            x = dx * this.getOrthoWScale();
+            y = dy * this.getOrthoHScale();
+        }
 
-        const x   = dx * this.stepScale * dist / this.canvas.clientHeight;
-        const y   = dy * this.stepScale * dist / this.canvas.clientHeight;        
         const pos = screenPanStep( this.camera, x, y, startPos );
-
         this.setTarget( pos );
     }
 
@@ -291,6 +401,15 @@ class OrbitCursor{
     }
     // #endregion
 
+    // #region HELPERS
+    getProjDistScale( startPos=null ){
+        // Camera distance / Focal Length / Viewport Height
+        return  vec3.dist( this.getCameraPos(), startPos || this.targetPos ) * 
+                Math.tan( ( this.camera.getEffectiveFOV() * 0.5 ) * 0.01745329251 ) /
+                this.canvas.clientHeight;
+    }
+    // #endregion
+
     // #region MOUSE HANDLERS
     onPointerWheel = ( e, dx, dy )=>{
         // Kind of a hack, not 100% sure that mouse wheels will
@@ -312,8 +431,15 @@ class OrbitCursor{
                 this.stepY( tick * this.yStep );
             }else{
                 // Zoom Movement
-                this.setTargetDistance( ( tick === -1 )? d * scl : d / scl );
-            }
+                if( !this.camera.isOrthographicCamera ){
+                    this.setTargetDistance( ( tick === -1 )? d * scl : d / scl );
+                }else{
+                    const c =  this.camera;
+                    const z = ( dy < 0 )? c.zoom / scl : c.zoom * scl;
+                    c.zoom = Math.max( 0.000001, z );
+                    c.updateProjectionMatrix();
+                }
+            }   
         }else{
             if( e.shiftKey ){
                 // If shift, move the target instead of orbiting it
