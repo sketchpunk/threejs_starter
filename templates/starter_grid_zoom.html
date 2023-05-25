@@ -1,0 +1,220 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from '../lib/Starter.js';
+import facedCube 			from '../lib/meshes/FacedCube.js';
+
+import { vec3 }             from 'gl-matrix';
+
+// #region MAIN
+let App;
+let Ref = {};
+
+window.addEventListener( "load", async _=>{
+	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	App = new Starter( { webgl2:false, grid:false } );
+	App.setCamera( 0, 90, 6 );
+    App.onRender = onRender;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    App.scene.add( facedCube() );
+
+    let mesh = new Grid( { size:200, segments: 200 } );
+    Ref.grid = mesh;
+    App.scene.add( mesh );
+
+    console.log( Math.PI );
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.render();
+});
+
+
+// https://stackoverflow.com/questions/56689584/threejs-how-to-create-zoomable-adaptive-grid-helper
+function onRender( dt, et ){
+
+    // const zoomAdjust = 5;
+    const camPos = App.camera.position.toArray();
+    const distance = vec3.len( camPos );
+    const div      = camPos[1] / 10; //Math.log10( distance ) ;
+    const lvl      = Math.floor( div ) + 1;
+    const grad     = div - Math.floor( div );
+
+    // console.log( "distance", distance, "lvl", lvl, 'grad', grad );
+    // Ref.grid.scale.setScalar( lvl );
+    // Ref.grid0.material.opacity = Math.max( (1 - grad) );
+
+    // Ref.grid1.scale.setScalar( lvl * 0.1 );
+
+    // const gridLevel = Math.log10( distance );
+    // const gridFract = euclideanMod( gridLevel, 1 );
+    // const gridZoom  = Math.pow( 5, Math.floor( gridLevel ) );    
+
+    // console.log( 'distance', distance, 'Level', gridLevel, 'Fract', gridFract, 'Zoom', gridZoom );
+
+    // Ref.grid0.scale.setScalar( gridZoom );
+    // Ref.grid0.material.opacity = Math.max((1 - gridFract) * 1);
+    
+    // Ref.grid1.scale.setScalar( gridZoom * 0.1 );
+    // Ref.grid1.material.opacity = Math.max(gridFract * 10) - 1;
+    // Ref.grid1.visible = Ref.grid1.material.opacity > 0;
+
+    // Ref.grid0.scale.setScalar( (Math.floor( et / 2 ) % 2)==0?1:2 );
+
+}
+
+function euclideanMod( a, b ) {
+    return ( ( a % b ) + b ) % b;
+}
+// #endregion
+
+
+class Grid extends THREE.LineSegments{
+
+    constructor( props={} ){
+        props = Object.assign( {
+            mainColor   : 0x4E4E4E,
+            subColor    : 0x404040,
+            xColor      : 0x843D47,
+            zColor      : 0x658C25,
+            size        : 10,
+            segments    : 10,
+            sub         : 5,
+        }, props );
+
+        super( 
+            Grid.buildGeo( props.size, props.segments, props.sub ), 
+            GridMaterial( props )
+        );
+    }
+
+    static buildGeo( size=10, seg=10, sub=5 ){
+        const h     = size / 2;
+        const sCnt  = seg * sub;
+        const hCnt  = sCnt * 0.5;
+        const inc   = size / sCnt;
+        const verts = [];
+        
+        let ii;
+        let grp;
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Origin Lines
+        verts.push( 
+            -h, 0,  0, 2, h, 0, 0, 2,    // X axis line
+             0, 0, -h, 3, 0, 0, h, 3,    // Z axis line
+        );
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Grid Lines
+        for( let i=1; i <= hCnt; i++ ){
+            ii  = inc * i;
+            grp = ( i % sub )? 1 : 0;
+            verts.push(
+                ii, 0,  -h, grp,  ii, 0,   h, grp,  // Positive Vertical Lines
+               -ii, 0,  -h, grp, -ii, 0,   h, grp,  // Negative Vertical Lines
+                -h, 0,  ii, grp,   h, 0,  ii, grp,  // Positive Horizontal Lines
+                -h, 0, -ii, grp,   h, 0, -ii, grp,  // Negative Horizontal Lines
+            );
+        }
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute( 'position', new THREE.BufferAttribute( new Float32Array(verts), 4 ) );
+
+        return geo;
+    }
+}
+
+function toRgbBuf( ary, i, c ){
+    const NORMALIZE_RGB	= 1 / 255.0;
+    ary[ i+0 ] = ( c >> 16 & 255 ) * NORMALIZE_RGB;
+    ary[ i+1 ] = ( c >> 8 & 255 )  * NORMALIZE_RGB;
+    ary[ i+2 ] = ( c & 255 )       * NORMALIZE_RGB;
+}
+
+function GridMaterial( props={} ){
+    props = Object.assign( {
+        mainColor   : 0x4E4E4E,
+        subColor    : 0x404040,
+        xColor      : 0x843D47,
+        zColor      : 0x658C25,
+    }, props );
+
+    const aryColor = new Float32Array( 4 * 3 );
+
+    toRgbBuf( aryColor, 0,   props.mainColor );
+    toRgbBuf( aryColor, 3,   props.subColor );
+    toRgbBuf( aryColor, 2*3, props.xColor );
+    toRgbBuf( aryColor, 3*3, props.zColor );
+
+    const mat = new THREE.RawShaderMaterial({
+        depthTest       : true,
+        transparent     : true,
+        alphaToCoverage : false,
+        side            : THREE.DoubleSide,
+
+        uniforms: {
+            colors      : { value: aryColor },
+        },
+
+        extensions: { derivatives: true, },
+
+        vertexShader: `#version 300 es
+        in vec4 position;
+
+        uniform vec3 cameraPosition;
+
+        uniform mat4 modelMatrix;
+        uniform mat4 viewMatrix;
+        uniform mat4 projectionMatrix;
+
+        flat out int iColor;
+        out float fade;
+
+        // const float TORAD = 0.01745329251;
+
+        void main(){
+            // float fovScl  = tan( 45.0 * 0.5 * TORAD );
+            // float factor  = cameraPosition.y * fovScl / 8.0;
+            // float factor  = ( length( cameraPosition ) * fovScl ) / 10.0;
+            float factor  = length( cameraPosition ) / 10.0;
+            float scl     = floor( factor ) + 1.0;
+
+            vec4 wPos     = modelMatrix * vec4( position.xyz * scl, 1.0 );    // World Space
+            vec4 vPos     = viewMatrix * wPos;                          // View Space
+            gl_Position   = projectionMatrix * vPos;
+            
+            iColor        = int( position.w );
+            fade          = 1.0 - fract( factor );
+        }`,
+
+        fragmentShader: `#version 300 es
+        precision mediump float;
+
+        uniform vec3 colors[4];
+        in float fade;
+
+        flat in int iColor;
+        out vec4 outColor;
+
+        void main(){
+            float alpha = ( iColor == 1 )? fade : 1.0;
+            outColor    = vec4( colors[ iColor ], alpha );
+        }`,
+    });
+
+    // Object.defineProperty(mat, 'faceColor', {
+    //     set( c ){ mat.uniforms.faceColor.value.set( c ); },
+    // });
+
+    // Object.defineProperty(mat, 'borderSize', {
+    //     set( v ){ mat.uniforms.borderSize.value = v; },
+    // });
+
+    return mat;
+}
+
+</script></body></html>

@@ -1,0 +1,59 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from '../lib/Starter.js';
+import ShapePointsMesh      from "../lib/meshes/ShapePointsMesh.js";
+import DynLinesMesh         from "../lib/meshes/DynLineMesh.js";
+import facedCube 			from '../lib/meshes/FacedCube.js';
+import { vec3, quat, mat4 } from 'gl-matrix';
+
+let App;
+let Debug = {};
+let Ref   = {};
+
+window.addEventListener( 'load', _=>{
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:false, grid:true } );
+    App.setCamera( 10, 20, 6 ).render();
+
+    App.add( (Debug.pnt = new ShapePointsMesh() ) );
+    App.add( (Debug.ln  = new DynLinesMesh() ) );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.add( (Ref.cube2 = facedCube()) );
+    Ref.cube2.rotation.x = Math.PI;
+    Ref.cube2.position.y = 0.5;
+
+    App.add( (Ref.cube = facedCube()) );
+    
+    Ref.cube.rotation.x = Math.PI;
+    Ref.cube.position.y = 0.5;
+    Ref.pivot = [0.5,1.0,0.5 ];
+
+    Debug.pnt.add( Ref.pivot, 0xffff00, 4 );
+    pivotRot();
+});
+
+function pivotRot(){
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const cubePos   = Ref.cube.position.toArray();
+    const cubeRot   = Ref.cube.quaternion.toArray();
+    const pivot 	= Ref.pivot;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const newPos    = [0,0,0];
+    const newRot    = [0,0,0,1];
+    const q         = [0,0,0,1];
+    const offset 	= vec3.sub( [0,0,0], cubePos, pivot );	// Get Pivot Offset
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    quat.setAxisAngle( q, [0,0,1], -180 * Math.PI / 180 );	// Create Axis Rotation
+    quat.mul( newRot, q, cubeRot );							// Rotate Cube's current rot
+    vec3.transformQuat( offset, offset, q );				// Rotate the Pivot Offset
+    vec3.add( newPos, pivot, offset );						// Add Offset back to Pivot
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    Ref.cube.position.fromArray( newPos );
+    Ref.cube.quaternion.fromArray( newRot );
+}
+
+
+</script></body></html>
