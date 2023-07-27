@@ -1,0 +1,87 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }  from '../lib/Starter.js';
+import ShapePointsMesh     from "../lib/meshes/ShapePointsMesh.js";
+import DynLinesMesh        from "../lib/meshes/DynLineMesh.js";
+
+import { quat, vec3 }      from 'gl-matrix';
+
+let App;
+let Debug = {};
+
+window.addEventListener( "load", _=>{
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:false, grid:true } );
+    App.setCamera( 0, 40, 4, [0,1,0] ).render();
+
+    App.add( (Debug.pnt = new ShapePointsMesh() ) );
+    App.add( (Debug.ln  = new DynLinesMesh() ) );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    const center  = [ 0,1,0 ];
+    const extents = [ 0.2, 1.0, 0.3 ]; // scale * 0.5
+    const q       = [ 0,0,0,1 ];
+    
+    quat.rotateY( q, q, 45 * Math.PI / 180 );
+    quat.rotateX( q, q, -45 * Math.PI / 180 );
+    quat.rotateZ( q, q, 45 * Math.PI / 180 );
+    
+    
+
+    const xaxis     = vec3.transformQuat( [], [1,0,0], q );
+    vec3.scale( xaxis, xaxis, extents[0] );
+
+    const yaxis      = vec3.transformQuat( [], [0,1,0], q );
+    vec3.scale( yaxis, yaxis, extents[1] );
+
+    const zaxis     = vec3.transformQuat( [], [0,0,1], q );
+    vec3.scale( zaxis, zaxis, extents[2] );
+
+    const xp      = vec3.add( [], center, xaxis );
+    const xn      = vec3.sub( [], center, xaxis );
+
+    const b0      = vec3.add( [], xn, yaxis );
+    const b1      = vec3.sub( [], xn, yaxis );
+    const b2      = vec3.sub( [], xp, yaxis );
+    const b3      = vec3.add( [], xp, yaxis );
+
+    Debug.pnt.add( center, 0xffff00, 3 );
+    Debug.ln.add( center, vec3.add( [], center, zaxis ), 0x0000ff );
+    Debug.ln.add( center, vec3.add( [], center, yaxis ), 0x00ff00 );
+    Debug.ln.add( center, vec3.add( [], center, xaxis ), 0xff0000 );
+
+    Debug.pnt.add( xp, 0x00ff00, 2 );
+    Debug.pnt.add( xn, 0x00ff00, 2 );
+    Debug.pnt.add( b0, 0x00ffff, 2 );
+    Debug.pnt.add( b1, 0x00ffff, 2 );
+    Debug.pnt.add( b2, 0x00ffff, 2 );
+    Debug.pnt.add( b3, 0x00ffff, 2 );
+
+    const pnts = [
+        vec3.add( [], b0, zaxis ),  // Front Face Points
+        vec3.add( [], b1, zaxis ),
+        vec3.add( [], b2, zaxis ),
+        vec3.add( [], b3, zaxis ),
+
+        vec3.sub( b0, b0, zaxis ),  // Back Face Points
+        vec3.sub( b1, b1, zaxis ),
+        vec3.sub( b2, b2, zaxis ),
+        vec3.sub( b3, b3, zaxis ),
+    ];
+
+    for( let p of pnts ){
+        Debug.pnt.add( p, 0xffffff, 3 );
+    }
+
+
+    // Debug.pnt
+    //     .add( [-1,0,0], 0x00ffff, 4, 1 )
+    //     .add( [1,0,0],  0x00ffff, 6, 2 )
+    //     .add( [0,1,0],  0xffff00, 6, 5 );
+
+    // Debug.ln
+    //     .add( [-1,0,0], [-1,1,0], 0x00ffff, 0xffff00, false )
+    //     .add( [1,0,0],  [1,1,0],  0x00ffff, 0xffff00, false )
+    //     .add( [-1,1,0], [1,1,0],  0xffff00, null, true );
+});
+</script></body></html>

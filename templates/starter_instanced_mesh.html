@@ -1,0 +1,306 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE } from '../lib/Starter.js';
+
+let App;
+
+window.addEventListener( "load", _=>{
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:true, grid:true } );
+    App.setCamera( 45, 20, 6 ).render();
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // const bGeo = new THREE.SphereGeometry( 0.5, 16, 12 ); 
+    const bGeo = new THREE.BoxGeometry( 0.5, 0.5, 0.5 );
+    
+    const geo  = {
+        indices  : bGeo.index.array,
+        vertices : bGeo.attributes.position.array,
+        normal   : bGeo.attributes.normal.array,
+        uv       : bGeo.attributes.uv.array,
+    };
+
+    const iMesh = new InstancedRTSMesh( geo, customInstancedMaterial(), 5 );
+    iMesh.setItem( 0, [0,0.5,0] );
+    iMesh.setItem( 1, [2,0.5,0], [0.4, 0, 0, 0.4] );
+    iMesh.setItem( 2, [-2,0.5,0], [-0.4, 0, 0, 0.4] );
+
+    App.scene.add( iMesh );
+
+    // console.log( iMesh );
+
+    setTimeout( ()=>{
+        iMesh.setItem( 3, [0,0.5,2] );
+    }, 2000 );
+});
+
+
+class InstancedRTSMesh extends THREE.Mesh{
+    // #region MAIN
+    _baseGeo  = null;
+    _instPos  = null;
+    _instRot  = null;
+    _instScl  = null;
+    _capacity = 0;
+    _size     = 0;
+    _isDirty  = true;
+
+    constructor( geo, mat, max=5 ){
+        super();
+
+        this._baseGeo = geo;
+        this.material = mat;
+        
+        this.resize( max );
+        this.setInstanceCount( 0 );
+
+        this.onBeforeRender = ()=>{ if( this._isDirty ) this.updateGeometry(); }
+    }
+    // #endregion
+
+    // #region MANAGE BUFFERS
+    resize( size ){
+        if( size <= this._capacity ) return;
+        this._capacity = size;
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Resize local buffers
+        const fRot = new Float32Array( size * 4 );
+        if(this._instRot ) fRot.set( this._instRot );
+        this._instRot = fRot;
+
+        const fPos = new Float32Array( size * 3 );
+        if( this._instPos ) fPos.set( this._instPos ); 
+        this._instPos = fPos;
+
+        const fScl = new Float32Array( size * 3 );
+        if( this._instScl ) fRot.set(this._instScl);
+        this._instScl = fScl;
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Do house keeping on existing geometry buffers
+        if( this.geometry ) this.geometry.dispose();
+
+        this.geometry = this._buildInstancedGeometry();
+    }
+
+    // After modifing instance information, need to call update so threejs knows that it needs to upload to gpu
+    updateGeometry(){
+        const geo  = this.geometry;
+        const bPos = geo.attributes.instPos;
+        const bRot = geo.attributes.instRot;
+        const bScl = geo.attributes.instScl;
+
+        bPos.array.set( this._instPos ); bPos.needsUpdate = true;
+        bRot.array.set( this._instRot ); bRot.needsUpdate = true;
+        bScl.array.set( this._instScl ); bScl.needsUpdate = true;
+
+        this._isDirty     = false;
+        geo.instanceCount = this._size;
+        geo.needsUpdate   = true;
+        // geo.computeBoundingBox();   // Needed for Ray casting into mesh
+        // geo.computeBoundingSphere();
+
+        return this;
+    }
+
+    _buildInstancedGeometry(){
+        const bGeo = geoBuffer( this._baseGeo );
+        appendRTS( bGeo, this._instPos, this._instRot, this._instScl );
+        return bGeo;
+    }
+
+    // #endregion
+
+    // #region METHODS
+    setInstanceCount( v ){ this.geometry.instanceCount = v; }
+
+    reset(){
+        this.geometry.instanceCount = 0;
+        this._size                  = 0;
+        this._isDirty               = false;
+        return this;
+    }
+
+    setItem( idx, pos, rot = [0,0,0,1], scl = [1,1,1] ){
+        if( idx >= this._capacity ) return;
+
+        const i  = idx * 3;
+        const ii = idx * 4;
+
+        this._instRot[ii + 0] = rot[0];
+        this._instRot[ii + 1] = rot[1];
+        this._instRot[ii + 2] = rot[2];
+        this._instRot[ii + 3] = rot[3];
+
+        this._instPos[i + 0]  = pos[0];
+        this._instPos[i + 1]  = pos[1];
+        this._instPos[i + 2]  = pos[2];
+
+        this._instScl[i + 0]  = scl[0];
+        this._instScl[i + 1]  = scl[1];
+        this._instScl[i + 2]  = scl[2];
+
+        this._isDirty = true;
+        this._size    = Math.max( this._size, idx+1 );
+        return this;
+    }
+    // #endregion
+}
+
+
+function geoBuffer( props ){
+    const p = Object.assign( {
+        indices     : null,
+        normal      : null,
+        uv          : null,
+        joints      : null,
+        weights     : null,
+        skinSize    : 4,
+    }, props );
+
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.needsUpdate = true;
+
+    geo.setAttribute( 'position', new THREE.BufferAttribute( 
+        ( p.vertices instanceof Float32Array )? p.vertices : new Float32Array( p.vertices ),
+        3
+    ));
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Optional vertex buffers
+    if( p.indices ) geo.setIndex( new THREE.BufferAttribute( 
+        ( p.indices instanceof Uint16Array )? p.indices : new Uint16Array( p.indices ),
+        1 
+    ));
+
+    if( p.normal ) geo.setAttribute( 'normal', new THREE.BufferAttribute( 
+        ( p.normal instanceof Float32Array )? p.normal : new Float32Array( p.normal ),
+        3
+    ));
+
+    if( p.uv ) geo.setAttribute( 'uv', new THREE.BufferAttribute( 
+        ( p.uv instanceof Float32Array )? p.uv : new Float32Array( p.uv ), 
+        2
+    ));
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Skinned Buffers
+    if( p.joints && p.weights ){
+        geo.setAttribute( 'skinWeight', new THREE.BufferAttribute(
+            ( p.weights instanceof Float32Array )? p.weights : new Float32Array( p.weights ), 
+            p.skinSize 
+        ));
+
+        geo.setAttribute( 'skinIndex',  new THREE.BufferAttribute(
+            ( p.joints instanceof Float32Array )? p.joints : new Float32Array( p.joints ), 
+            p.skinSize 
+        ));
+    }
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Finalize
+    // geo.computeBoundingSphere();
+    // geo.computeBoundingBox();
+
+    return geo;
+}
+
+function appendRTS( geo, ipos, irot, iscl ){
+    const bRot = new THREE.InstancedBufferAttribute( irot, 4 );
+    geo.setAttribute( 'instRot', bRot );
+    bRot.setUsage( THREE.DynamicDrawUsage );
+    // bRot.needsUpdate = true;
+    
+    const bPos = new THREE.InstancedBufferAttribute( ipos, 3 );
+    geo.setAttribute( 'instPos', bPos );
+    bPos.setUsage( THREE.DynamicDrawUsage );
+    // bPos.needsUpdate = true;
+
+    const bScl = new THREE.InstancedBufferAttribute( iscl, 3 );
+    geo.setAttribute( 'instScl', bScl );
+    bScl.setUsage( THREE.DynamicDrawUsage );
+    // bRot.needsUpdate = true;
+}
+
+
+function customInstancedMaterial(){
+  const mat = new THREE.RawShaderMaterial({
+    uniforms: {
+    //   scale: {type: 'float', value: scale},
+    },
+
+    vertexShader: `#version 300 es
+    in vec3 position;
+    in vec3 normal;
+    in vec2 uv;
+    in vec3 instPos;
+    in vec4 instRot;
+    in vec3 instScl;
+
+    uniform mat4 modelMatrix;
+    uniform mat4 viewMatrix;
+    uniform mat4 projectionMatrix;
+
+    out vec3 fragNorm;
+    out vec3 fragColor;
+
+    // ###########################################################
+
+    // Quat * Vec3 - Rotates Vec3
+    vec3 q_mul_vec( vec4 q, vec3 v ){
+        //return v + cross( 2.0 * q.xyz, cross( q.xyz, v) + q.w * v );  // Either Seems to Work, not sure which is the correct way to handle transformation
+        return v + 2.0 * cross( q.xyz, cross( q.xyz, v ) + q.w * v );
+    }
+
+    // ###########################################################
+
+    void main(){
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Apply quat rotation
+        vec3 pos    = q_mul_vec( instRot, position * instScl );
+        vec3 norm   = q_mul_vec( instRot, normal ); ;
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Apply Matrices
+        vec4 wPos	  = modelMatrix * vec4( pos + instPos, 1.0 );
+        vec4 vPos     = viewMatrix * wPos;
+        gl_Position   = projectionMatrix * vPos;
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Fragment outputs
+        fragNorm    = ( modelMatrix * vec4( norm, 0.0 ) ).xyz;
+    }`,
+
+    fragmentShader: `#version 300 es
+    precision mediump float;
+
+    in vec3 fragNorm;
+    out vec4 outColor;
+
+    // ###########################################################
+
+    // Hard code light directions
+    vec3 sunDir = normalize( vec3( 10.0, 10.0, 10.0 ) );
+    vec3 grdDir = vec3( 0.0, -1.0, 0.0 );
+
+    // ###########################################################
+
+    void main(){
+        vec3 norm     = normalize( fragNorm );
+
+        float diffuse = clamp(
+            clamp( dot( norm, sunDir ), 0.0, 1.0 ) +  // Sun downward light
+            clamp( dot( norm, grdDir ), 0.0, 0.24 ),  // Ground reflected light
+            0.2,
+            1.0
+        );
+
+        outColor = vec4( vec3( 0.0, 1.0, 1.0 ) * diffuse, 1.0 );
+    }`,
+  });
+
+  return mat;
+}
+
+
+</script></body></html>

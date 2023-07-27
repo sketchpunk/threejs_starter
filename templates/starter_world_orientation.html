@@ -1,0 +1,234 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title></title></head>
+<style>canvas{ display:block; } body, html { padding:0px; margin:0px; width:100%; height:100%; }</style>
+<body><script src="/import-map.js"></script><script type="module">
+import useThreeWebGL2, { THREE, useDarkScene, useVisualDebug } from '../lib/useThreeWebGL2.js';
+import useTransformControl  from '../lib/useTransformControl.js';
+import facedCube            from '../lib/meshes/FacedCube.js';
+import { vec3, quat, mat4 } from 'gl-matrix'; 
+import Orbit                from '../lib/camera/Orbit.js';
+
+// #region MAIN
+let Debug;
+let App   = useDarkScene( useThreeWebGL2( { orbit:false } ), { grid:false, } );
+let Ref   = {
+    gizmo   : useTransformControl( App ).useWorld(),
+};
+
+window.addEventListener( 'load', _=>{
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Setup
+    App.sphericalLook( 0, 20, 15 );
+    // Debug = await useVisualDebug( App );
+
+    Ref.orbit = new Orbit( App.renderer, App.camera, false );
+    Ref.orbit.setOrbit( 0, 20, 15  );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.scene.add( (Ref.floor = new THREE.GridHelper( 10, 10, 0x0c610c, 0x444444 )) );
+    App.scene.add( (Ref.axes = new THREE.AxesHelper()) );
+    App.scene.add( (Ref.cube = facedCube( [3,1,-3])))
+
+    Ref.world = new WorldOrientation();
+    Ref.world.on( 'worldChange', ()=>{
+        Ref.world.applyToObject3D( Ref.floor );
+    });
+
+    // Ref.world.rotation[0] = 45;
+    // Ref.world.rotation[1] = 45;
+    // Ref.world.updateMatrix();
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // App.renderLoop();
+    App.createRenderLoop( onPreRender ).start();
+
+    setupInit()
+});
+
+Ref.gizmo.onStart = ()=>{ Ref.orbit.disable() }
+Ref.gizmo.onStop  = ()=>{ Ref.orbit.enable() }
+// Ref.gizmo.onMove  = p=>{ }
+
+function onPreRender(){
+    Ref.world.applyToObject3D( App.camera );
+}
+
+function setupInit(){
+    // #region ROTATION
+    const rx = document.getElementById( 'inpRotX' );
+    const ry = document.getElementById( 'inpRotY' );
+    const rz = document.getElementById( 'inpRotZ' );
+
+    const fnRot = ()=>{
+        Ref.world.rotation[0] = parseFloat( rx.value );
+        Ref.world.rotation[1] = parseFloat( ry.value );
+        Ref.world.rotation[2] = parseFloat( rz.value );
+        Ref.world.updateMatrix();
+    };
+
+    rx.addEventListener( 'input', fnRot );
+    ry.addEventListener( 'input', fnRot );
+    rz.addEventListener( 'input', fnRot );
+    // #endregion
+
+    // #region POSITION PFFSET
+    const px = document.getElementById( 'inpPosX' );
+    const py = document.getElementById( 'inpPosY' );
+    const pz = document.getElementById( 'inpPosZ' );
+
+    const fnPos = ()=>{
+        Ref.world.offset[0] = parseFloat( px.value );
+        Ref.world.offset[1] = parseFloat( py.value );
+        Ref.world.offset[2] = parseFloat( pz.value );
+        Ref.world.updateMatrix();
+    };
+    
+    px.addEventListener( 'input', fnPos );
+    py.addEventListener( 'input', fnPos );
+    pz.addEventListener( 'input', fnPos );
+    // #endregion
+
+    document.getElementById( 'btnPlace' ).addEventListener( 'click', ()=>{
+        const pos   = [-1.5,0.5,1.5];
+        const rot   = [-0.7071067811865475,0,0,0.7071067811865475];
+        const [p,r] = Ref.world.applyToTransform( pos, rot )
+
+        const c = facedCube();
+        c.position.fromArray( p );
+        c.quaternion.fromArray( r );
+        App.scene.add( c );
+
+        Ref.gizmo.useLocal().attach( c );
+    });
+
+    document.getElementById( 'btnReset' ).addEventListener( 'click', ()=>{
+        Ref.world.reset();
+        rx.value = 0;
+        ry.value = 0;
+        rz.value = 0;
+        px.value = 0;
+        py.value = 0;
+        pz.value = 0;
+    });
+}
+
+// #endregion
+
+class WorldOrientation{
+    offset      = [0,0,0];  // Offset position
+    rotation    = [0,0,0];  // Euler in Angles
+    matrix      = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    quaternion  = [0,0,0,1];
+    events      = new EventTarget();
+
+    constructor(){}
+
+    reset(){
+        this.offset[0]      = 0;
+        this.offset[1]      = 0;
+        this.offset[2]      = 0;
+        this.rotation[0]    = 0;
+        this.rotation[1]    = 0;
+        this.rotation[2]    = 0;
+        this.updateMatrix();
+        return this;
+    }
+
+    updateMatrix(){
+        eulerYXZ2Quat( this.quaternion, this.rotation );
+        mat4.fromRotationTranslation( this.matrix, this.quaternion, this.offset );
+        this.emit( 'worldChange' );
+        return this;
+    }
+
+    applyToTransform( pos=[0,0,0], rot=[0,0,0,1] ){
+        // Transform Position : ( p * scale ) * rotation + translation
+        const p = vec3.transformQuat( [], pos, this.quaternion );  // p * rotation
+        vec3.add( p, p, this.offset );                             // + translation
+
+        // Transform Rotation : rotation * r
+        const r = quat.mul( [], this.quaternion, rot );
+        return [p,r];
+    }
+
+    applyToObject3D( obj, pmul=true ){
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // First compute the camera's matrix using its current transform
+        const m = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+        // console.log( obj.position.toArray(), obj.quaternion.toArray() );
+
+        mat4.fromRotationTranslationScale( m, 
+            obj.quaternion.toArray(), 
+            obj.position.toArray(),
+            obj.scale.toArray(),
+        );
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+        if( pmul ) mat4.mul( m, this.matrix, m );
+        else       mat4.mul( m, m, this.matrix );
+
+        obj.matrixAutoUpdate = false;   // Disable any update updating
+        obj.matrix.fromArray( m );
+        obj.matrixWorld.fromArray( m ); // Need to update this too, camera doesn't work well
+    }
+
+    // #region EVENTS
+    on( evtName, fn ){ this.events.addEventListener( evtName, fn, { once:false } ); return this; }
+    off( evtName, fn ){ this.events.removeEventListener( evtName, fn ); return this; }
+    once( evtName, fn ){ this.events.addEventListener( evtName, fn, { once:true } ); return this; }
+
+    emit( evtName, data=null ){
+        const evt = ( !data )
+            ? new Event( evtName, { bubbles:false, cancelable:true, composed:false } ) 
+            : new CustomEvent( evtName, { detail:data, bubbles:false, cancelable:true, composed:false } );
+        this.events.dispatchEvent( evt )
+    }
+    // #endregion
+}
+
+function eulerYXZ2Quat( out, rot ){
+    const xx = rot[0] * 0.01745329251 * 0.5;
+    const yy = rot[1] * 0.01745329251 * 0.5;
+    const zz = rot[2] * 0.01745329251 * 0.5;
+    const c1 = Math.cos(xx);
+    const c2 = Math.cos(yy);
+    const c3 = Math.cos(zz);
+    const s1 = Math.sin(xx);
+    const s2 = Math.sin(yy);
+    const s3 = Math.sin(zz);
+
+    out[0] = s1 * c2 * c3 + c1 * s2 * s3;
+    out[1] = c1 * s2 * c3 - s1 * c2 * s3;
+    out[2] = c1 * c2 * s3 - s1 * s2 * c3;
+    out[3] = c1 * c2 * c3 + s1 * s2 * s3;
+    return quat.normalize(out, out);
+}
+</script>
+
+<style>
+    .container{ position:fixed; top:10px; left:10px; display:flex; flex-direction:column; width:150px; }
+    .vec3{ display:flex; flex-direction:row; justify-content:space-between; align-items:baseline; }
+    .vec3 > input[type=number]{ border:0px; margin-left:4px; flex:1 1 auto; min-width:0px; }
+    .vec3 > input[type=number]:first-of-type{ margin-left:0px; }
+    label{ font-size:14px; font-family:monospace; color:white; }
+</style>
+<div class="container">
+    <label>Rotation</label>
+    <section class="vec3">
+        <input type="number" id="inpRotX" min="-180" max="180" value="0" step="5" />
+        <input type="number" id="inpRotY" min="-180" max="180" value="0" step="5" />
+        <input type="number" id="inpRotZ" min="-180" max="180" value="0" step="5" />
+    </section>
+    
+    <br>
+    <label>Position</label>
+    <section class="vec3" style="width:150px;">
+        <input type="number" id="inpPosX" value="0" step="0.1" />
+        <input type="number" id="inpPosY" value="0" step="0.1" />
+        <input type="number" id="inpPosZ" value="0" step="0.1" />
+    </section>
+
+    <br><button id="btnReset">Reset</button>
+    <br><button id="btnPlace">Place Box</button>
+</div>
+</body></html>
