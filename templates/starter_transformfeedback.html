@@ -1,0 +1,169 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title></title></head>
+<style>canvas{ display:block; } body, html { padding:0px; margin:0px; width:100%; height:100%; }</style>
+<body><script src="/import-map.js"></script><script type="module">
+import useThreeWebGL2, { THREE, useDarkScene, useVisualDebug } from '../lib/useThreeWebGL2.js';
+
+// #region MAIN
+let Debug;
+let App   = useDarkScene( useThreeWebGL2( ) );
+let Ref   = {};
+
+/*
+BIG NOTE
+Threejs does not have any abstraction to run TransformFeedback
+plus any access to raw gl buffer references are privately scopes.
+To make this work you will need to modify the threejs library to
+expose just 1 collection.
+
+https://github.com/mrdoob/three.js/blob/master/src/renderers/WebGLRenderer.js#L325C12-L325C25
+In the initGLContext() method inside the WebGLRenderer, just need to
+add the following line of code at the end of the method. This is enough
+to be able to grab the buffer references of geometry attributes.
+
+_this.attributes = attributes;
+
+*/
+
+window.addEventListener( 'load', async _=>{
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Setup
+    App.sphericalLook( 0, 20, 15 );
+    // Debug = await useVisualDebug( App );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    const geo = geoBuffer({ 
+        vertices : new Float32Array( [0,0.5,0,  0,0,0] ), 
+        color    : new Float32Array( [0,1,0,  0,0,1 ] ), 
+    });
+
+    const mat  = new THREE.PointsMaterial( { size:0.5, vertexColors: true  } );
+    const mesh = new THREE.Points( geo, mat );
+
+    App.scene.add( mesh );
+    App.render(); // MUST RENDER FIRST, else can not get GL Buffer References from Renderer
+
+    const { vao, tf } = createTF( App.renderer, geo );
+    const prog        = createShader( App.renderer );
+    runTF( App.renderer, vao, tf, prog );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.renderLoop();
+    // App.createRenderLoop( onPreRender ).start();
+});
+
+// #endregion
+
+function geoBuffer( props ){
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute( 'position', new THREE.BufferAttribute( props.vertices, 3 ) );
+
+    if( props.indices ) geo.setIndex( new THREE.BufferAttribute( props.indices, 1 ) );
+    if( props.normal )  geo.setAttribute( 'normal', new THREE.BufferAttribute( props.normal, 3 ) );
+    if( props.uv )      geo.setAttribute( 'uv', new THREE.BufferAttribute( props.uv, 2 ) );
+    if( props.color )   geo.setAttribute( 'color', new THREE.BufferAttribute( props.color, 3 ) );
+
+    return geo;
+}
+
+function runTF( renderer, vao, tf, prog ){
+    const gl = renderer.getContext();
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Setup our state
+    gl.useProgram( prog );
+    gl.bindVertexArray( vao );
+    gl.bindTransformFeedback( gl.TRANSFORM_FEEDBACK, tf );
+    gl.enable( gl.RASTERIZER_DISCARD ); // Disable fragment shader, its not needed
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    gl.beginTransformFeedback( gl.POINTS );
+    gl.drawArrays( gl.POINTS, 0, 2 );   // Process 2 points
+    gl.endTransformFeedback()
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Cleanup our state
+    gl.useProgram( null );
+    gl.bindVertexArray( null );
+    gl.bindTransformFeedback( gl.TRANSFORM_FEEDBACK, null );
+    gl.disable( gl.RASTERIZER_DISCARD );
+}
+
+function createTF( renderer, geo ){
+    const gl   = renderer.getContext();
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const pBuf = renderer.attributes.get( geo.attributes.position );
+    const vao  = gl.createVertexArray();
+
+    gl.bindVertexArray( vao );                              // Activate VAO to bind buffers to it
+    gl.bindBuffer( gl.ARRAY_BUFFER, pBuf.buffer );          // Bind position buffer
+    gl.vertexAttribPointer( 0, 3, gl.FLOAT, false, 0, 0 );  // Setup as attribute @ LOC 0
+    gl.enableVertexAttribArray( 0 );                        // Turn onf attribute
+    gl.bindVertexArray( null );                             // must unbind vao first
+    gl.bindBuffer( gl.ARRAY_BUFFER, null );                 // then can unbind buffer
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const cBuf = renderer.attributes.get( geo.attributes.color );
+    const tf   = gl.createTransformFeedback();
+
+    gl.bindTransformFeedback( gl.TRANSFORM_FEEDBACK, tf );              // Bind TF
+    gl.bindBufferBase( gl.TRANSFORM_FEEDBACK_BUFFER, 0, cBuf.buffer );  // Bind buffer as output @ LOC 0
+    gl.bindTransformFeedback( gl.TRANSFORM_FEEDBACK, null );            // Unbind TF.
+
+    return { vao, tf };
+}
+
+function createShader( renderer ){
+    const gl   = renderer.getContext();
+    let status;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Vertex Shader
+    const vshader = gl.createShader( gl.VERTEX_SHADER );
+    gl.shaderSource( vshader, V_SRC );
+    gl.compileShader( vshader );
+    status = gl.getShaderParameter( vshader, gl.COMPILE_STATUS );
+    if( !status ) console.log( 'VERTEX ERROR', gl.getShaderInfoLog( vshader ) );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Fragment Shader - NOT NEEDED for compute but needed for linking
+    const fshader = gl.createShader( gl.FRAGMENT_SHADER );
+    gl.shaderSource( fshader, F_SRC );
+    gl.compileShader( fshader );
+    status = gl.getShaderParameter( fshader, gl.COMPILE_STATUS );
+    if( !status ) console.log( 'FRAGMENT ERROR', gl.getShaderInfoLog( fshader ) );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Build final shader program
+    const prog = gl.createProgram();
+    gl.attachShader( prog, vshader );
+    gl.attachShader( prog, fshader );
+    gl.transformFeedbackVaryings( prog, [ 'color' ], gl.SEPARATE_ATTRIBS ); // Define shader TF outputs
+    gl.linkProgram( prog );
+
+    status = gl.getProgramParameter( prog, gl.LINK_STATUS );
+    if( !status ) console.log( 'LINK ERROR', gl.getProgramInfoLog( prog ) );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // cleanup
+    gl.detachShader( prog, vshader );
+    gl.detachShader( prog, fshader );
+    gl.deleteShader( vshader );
+    gl.deleteShader( fshader );
+
+    return prog;
+}
+
+const V_SRC = `#version 300 es
+layout(location=0) in vec3 position;
+out vec3 color;
+
+void main(){
+    color = vec3( 1.0, 1.0, 1.0 );
+}`;
+
+const F_SRC = `#version 300 es
+void main(){}`;
+
+</script></body></html>
