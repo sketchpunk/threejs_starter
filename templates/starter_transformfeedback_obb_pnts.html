@@ -40,7 +40,7 @@ _this.attributes = attributes;
 window.addEventListener( 'load', async _=>{
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // Setup
-    App.sphericalLook( 0, 20, 15 );
+    App.sphericalLook( 0, 20, 60 );
     Debug = await useVisualDebug( App );
 
     Ref.stats.showPanel( 0 );
@@ -763,6 +763,15 @@ class PointColorizer{
         const rend = this.renderer;
         const gl   = this.gl;
 
+        // Looks like 3JS leaves VAOs bound after rendering
+        // This breaks buffer binding for transform feedback
+        // SOOO... Make sure there are no VAO bound before running TF
+        gl.bindVertexArray( null );
+
+        // For extra protection, lets just unbind array buffers too
+        // Doesn't seem needed but since VAO was an issue, lets do this too.
+        gl.bindBuffer( gl.ARRAY_BUFFER, null );
+
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         // Setup Shader
         gl.useProgram( this.shader.prog );  // Turn on shader
@@ -806,7 +815,7 @@ class PointColorizer{
             // BIND OUTPUT BUFFERS & EXECUTE
             
             // Color Output
-            gl.bindBufferBase( gl.TRANSFORM_FEEDBACK_BUFFER, 0, atrPos.buffer );  // Bind color as output @ LOC 0
+            gl.bindBufferBase( gl.TRANSFORM_FEEDBACK_BUFFER, 0, atrCol.buffer );  // Bind color as output @ LOC 0
 
             // Execute
             gl.beginTransformFeedback( gl.POINTS );
