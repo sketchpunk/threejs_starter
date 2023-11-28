@@ -1,0 +1,178 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title></title></head>
+<style>canvas{ display:block; } body, html { padding:0px; margin:0px; width:100%; height:100%; }</style>
+<body><script src="/import-map.js"></script><script type="module">
+import useThreeWebGL2, { THREE, useDarkScene, useVisualDebug } from '../lib/useThreeWebGL2.js';
+
+// #region MAIN
+let Debug;
+let App   = useDarkScene( useThreeWebGL2( ) );
+let Ref   = {};
+
+
+window.addEventListener( 'load', async _=>{
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Setup
+    App.sphericalLook( 0, 20, 2.4 );
+    Debug = await useVisualDebug( App );
+
+    Debug.ln.box( [-0.5,-0.5,-0.5], [0.5,0.5,0.5], 0x505050 );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // const mat  = new THREE.MeshStandardMaterial( { color: 0xa0a0a0 } );
+    const mat  = sdfMaterial();
+    const geo  = new THREE.BoxGeometry( 1, 1, 1 );
+    const cube = new THREE.Mesh( geo, mat );
+    App.scene.add( cube );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.renderLoop();
+    // App.createRenderLoop( onPreRender ).start();
+});
+
+// #endregion
+
+function sdfMaterial( color='cyan' ){
+    const mat = new THREE.RawShaderMaterial({
+        side            : THREE.BackSide,
+        //depthTest   : true,
+        
+        transparent : true,
+        uniforms    : {
+            color       : { type :'vec3', value:new THREE.Color( color ) },
+        },
+
+        //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        vertexShader : `#version 300 es
+        in vec3 position;               // Vertex Position
+
+        uniform mat4 modelMatrix;       // Matrices should be filled in by THREE.JS Automatically.
+        uniform mat4 viewMatrix;
+        uniform mat4 projectionMatrix;
+
+        out vec3 fragWPos;             // Fragment World Space Position
+
+        ////////////////////////////////////////////////////////////////////////
+    
+        void main(){
+            vec4 wpos       = modelMatrix * vec4( position, 1.0 );
+            fragWPos        = wpos.xyz;
+            gl_Position     = projectionMatrix * viewMatrix * wpos;
+        }`,
+
+        //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        fragmentShader	: `#version 300 es
+        precision mediump float;
+        
+        ////////////////////////////////////////////////////////////////////////
+        
+        out     vec4 outColor;
+        in      vec3 fragWPos;
+
+        uniform vec3 color;
+        uniform vec3 cameraPosition;
+
+        ////////////////////////////////////////////////////////////////////////
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // SDF CONFIG
+
+        // GOOD QUALITY, BAD PERFORMANCE WHEN VERY CLOSE : TRIES 60, MIN 0.001
+        // MEDIUM QUALITY, BETTER PERFORMANCE CLOSE BY   : TRIES 30, MIN 0.005
+        const int   MARCH_TRIES     = 30;       // How many attempt to march ray
+        const float MARCH_EPSILON   = 0.005;    // Min Distance to SDF Surface
+        const float MARCH_MAX_DIST  = 20.0;     // Max Distance to Travel on March
+        const float MARCH_START     = 0.0;      // Starting Distance for Ro Marching
+
+        // Forward Declaration
+        float map_func( vec3 p );
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // SDF RAY MARCHING
+
+        struct SDFResult{
+            vec3   hit;
+            float  ao;
+            int    id;
+        } SR;
+
+        bool ray_march( vec3 ro, vec3 rd ){ // Ray Origin, Ray Direction
+            float d     = MARCH_START;  // How much distance on the ray traveled
+            float rng   = 0.0;          // Distance Range to next closets object
+
+            for( int i = 0; i < MARCH_TRIES && d < MARCH_MAX_DIST; i++ ){
+                rng = map_func( ro + rd * d );  // distance to the closest object
+                
+                // if( rng <= MARCH_EPSILON ){
+                
+                // if( abs( rng ) <= MARCH_EPSILON ){ // Help Fix some artifacts
+
+                // Spend less time trying to detail long distance pixels. 
+                if( abs( rng ) <= ( MARCH_EPSILON * d ) ){
+                    SR.hit = ro + rd * d;
+                    //SR.ao      = 1.0 - float( i ) / float( MARCH_TRIES - 1 );
+                    SR.ao      = 1.0 - d / MARCH_MAX_DIST;
+                    return true;
+                }
+            
+                d += rng;   // Add distance for the next check.
+            }
+            
+            return false;
+        }
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // SDF NORMAL
+
+        // OTHER VERSION, COMPILER'S OPTIMIZATION MIGHT CAUSE ISSUES WITH LARGE SETS OF SDF OBJECTS
+        uniform int iFrame;
+        vec3 normal_sdf( vec3 pos ){
+            #define ZERO min(iFrame,0)
+            vec3 n = vec3( 0.0 );
+
+            for( int i = ZERO; i < 4; i++ ){
+                vec3 e = 0.5773 * (2.0*vec3((((i+3)>>1)&1),((i>>1)&1),(i&1))-1.0);
+                n += e * map_func( pos + 0.0005 * e );
+            }
+            
+            return normalize( n );
+        }
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // SDF OPS
+
+        float sdf_smin( float a, float b, float k ){
+            float h = max( k-abs(a-b), 0.0 );
+            return min( a, b ) - h*h / (k*4.0);
+        }
+
+        float sdf_smax( float a, float b, float k ){
+            float h = max( k-abs(a-b), 0.0 );
+            return max( a, b ) + h*h / (k*4.0);
+        }
+
+        ////////////////////////////////////////////////////////////////////////
+
+        float sdfSphere( vec3 p, vec3 c, float r ){ return length(p - c) - r; }
+
+        float map_func( vec3 p ){
+            float d = sdfSphere( p, vec3( 0.0 ), 0.4 );
+            return d;
+        }
+
+        ////////////////////////////////////////////////////////////////////////
+
+        void main(){
+            vec3 ray   = normalize( fragWPos - cameraPosition );
+            outColor   = vec4( 0.0, 0.0, 0.0, 0.2 );
+
+            if( ray_march( cameraPosition, ray ) ){
+                vec3 norm   = normal_sdf( SR.hit );
+                outColor    = vec4( SR.hit + norm * 0.6 , 1.0 ); // * SR.ao
+            }
+        }`,
+    });
+
+    return mat;
+}
+
+</script></body></html>

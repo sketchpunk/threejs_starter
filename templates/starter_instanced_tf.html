@@ -1,0 +1,202 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title></title></head>
+<style>canvas{ display:block; } body, html { padding:0px; margin:0px; width:100%; height:100%; }</style>
+<body><script src="/import-map.js"></script><script type="module">
+import useThreeWebGL2, { THREE, useDarkScene, useVisualDebug } from '../lib/useThreeWebGL2.js';
+
+// #region MAIN
+let App   = useDarkScene( useThreeWebGL2( ) );
+let Ref   = {};
+
+window.addEventListener( "load", _=>{
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.sphericalLook( 0, 20, 5 );
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const geo  = new THREE.BoxGeometry( 1, 1, 1 ); 
+    const mat  = new THREE.MeshPhongMaterial( {color: 0x00ff00} ); 
+    // const mesh = new THREE.Mesh( geo, mat );
+
+    const mesh = new THREE.InstancedMesh( geo, mat, 2 );
+    mesh.instanceMatrix.setUsage( THREE.DynamicDrawUsage ); // will be updated every frame
+
+    const obj = new THREE.Object3D();
+    for( let i=0; i < 2; i++ ){
+        obj.position.set( i*2, 0, 0 );
+        obj.updateMatrix();
+        mesh.setMatrixAt( i, obj.matrix );
+    }
+
+    mesh.instanceMatrix.needsUpdate = true;
+    // mesh.geometry.computeBoundingSphere();
+    App.scene.add( mesh );
+    App.render();
+
+    // Using Modified THREEJS Library :)
+    // console.log( App.renderer.attributes.get( mesh.instanceMatrix ) );
+    // console.log( mesh.count  );
+
+    const gl = App.renderer.getContext();
+    Ref.mesh     = mesh;
+    Ref.feedback = gl.createTransformFeedback();
+
+    Ref.sh       = new GLShader( gl )
+    Ref.sh.compile( V_SRC, F_SRC, [ 'mtx' ] );
+
+    execute();
+
+    App.renderLoop();
+});
+
+// https://stackoverflow.com/questions/38853096/webgl-how-to-bind-values-to-a-mat4-attribute
+// https://github.com/mrdoob/three.js/blob/master/src/objects/InstancedMesh.js
+// https://github.com/mrdoob/three.js/blob/dev/src/core/InstancedBufferAttribute.js#L3
+
+
+const V_SRC = `#version 300 es
+precision highp float;
+
+out vec4 mtx;
+
+void main(){
+    // data = vec4( 2.0, 1.0, 0.0, 0.0 );
+    
+    // Mat4 handled as Vec4 Attribute
+    int i = int( mod( float(gl_VertexID), 4.0 ) );
+    if( i == 0 )       mtx = vec4( 1.0, 0.5, 0.0, 0.0 );   // X Scale & Rot
+    else if( i == 1 )  mtx = vec4( 0.0, 1.0, 0.0, 0.0 );   // Y Scale & Rot
+    else if( i == 2 )  mtx = vec4( 0.0, 0.0, 1.0, 0.0 );   // Z Scale & Rot
+    else if( i == 3 )  mtx = vec4( 0.0, 1.0, 0.0, 1.0 );   // Translation
+}`;
+
+const F_SRC = `#version 300 es
+void main(){}`;
+
+
+class GLShader{
+    // #region MAIN
+    prog     = null;
+    gl       = null;
+    uniforms = {};
+    constructor( gl ){ this.gl = gl; }
+
+    dispose(){
+        if( this.prog ) this.gl.deleteProgram( this.prog );
+        this.gl = null;
+    }
+    // #endregion
+
+    // #region METHODS
+    compile( vSrc, fSrc, tfVarying=null ){
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Compile Shader
+        const vSh = this._compileShader( vSrc, true );
+        if( !vSh ) return false;
+
+        const fSh = this._compileShader( fSrc, false );
+        if( !fSh ){ this.gl.deleteShader( vSh ); return false; }
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        this.prog = this._linkProgram( vSh, fSh, tfVarying );
+        return !!this.prog;
+    }
+
+    useUniforms( ary ){
+        for( let i of ary ){
+            this.uniforms[ i ] = this.gl.getUniformLocation( this.prog, i );
+        }
+        return this;
+    }
+    // #endregion
+
+    // #region HELPERS
+    _compileShader( src, isVert=true ){
+        const sh = this.gl.createShader( isVert
+            ? this.gl.VERTEX_SHADER
+            : this.gl.FRAGMENT_SHADER
+        );
+
+        this.gl.shaderSource( sh, src );
+        this.gl.compileShader( sh );
+
+        if( !this.gl.getShaderParameter( sh, this.gl.COMPILE_STATUS ) ){
+            console.log( 'SHADER COMPILE ERROR - isVert: ', isVert, 'MSG: ' , this.gl.getShaderInfoLog( sh ) );
+            this.gl.deleteShader( sh );
+            return null;
+        }
+
+        return sh;
+    }
+
+    _linkProgram( vSh, fSh, tfVarying=null ){
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Build Program
+        const prog = this.gl.createProgram();
+        this.gl.attachShader( prog, vSh );
+        this.gl.attachShader( prog, fSh );
+        
+        if( tfVarying ){
+            // Define shader TF outputs
+            this.gl.transformFeedbackVaryings( prog, tfVarying, this.gl.SEPARATE_ATTRIBS );
+            console.log( 'TFVarying', tfVarying );
+        }
+
+        this.gl.linkProgram( prog );
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Cleanup
+        this.gl.detachShader( prog, vSh );
+        this.gl.detachShader( prog, fSh );
+        this.gl.deleteShader( vSh );
+        this.gl.deleteShader( fSh );
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Validate
+        if( !this.gl.getProgramParameter( prog, this.gl.LINK_STATUS ) ){
+            console.log( 'LINK ERROR', this.gl.getProgramInfoLog( prog ) );
+            this.gl.deleteProgram( prog );
+            return null;
+        }
+
+        return prog;
+    }
+    // #endregion
+}
+
+
+function execute(){
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Alias
+    const rend = App.renderer;
+    const gl = rend.getContext();
+    const m  = Ref.mesh;
+
+    // Looks like 3JS leaves VAOs bound after rendering
+    // This breaks buffer binding for transform feedback
+    // This is probably the reason why my cubes where exploding
+    // SOOO... Make sure there are no VAO bound before running TF
+    gl.bindVertexArray( null );   
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Setup Shader
+    gl.useProgram( Ref.sh.prog );  // Turn on shader
+    
+    gl.bindTransformFeedback( gl.TRANSFORM_FEEDBACK, Ref.feedback );   // Bind TransformFeedback
+    gl.enable( gl.RASTERIZER_DISCARD ); // Disable fragment shader, its not needed
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const output = rend.attributes.get( m.instanceMatrix );
+    gl.bindBufferBase( gl.TRANSFORM_FEEDBACK_BUFFER, 0, output.buffer ); 
+
+    // Execute
+    gl.beginTransformFeedback( gl.POINTS );
+    gl.drawArrays( gl.POINTS, 0, 4 );
+    gl.endTransformFeedback();
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    gl.bindBuffer( gl.ARRAY_BUFFER, null );
+    gl.disable( gl.RASTERIZER_DISCARD );
+    gl.bindTransformFeedback( gl.TRANSFORM_FEEDBACK, null ); 
+    gl.useProgram( null );
+}
+
+</script></body></html>

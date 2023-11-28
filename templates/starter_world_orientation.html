@@ -203,6 +203,146 @@ function eulerYXZ2Quat( out, rot ){
     out[3] = c1 * c2 * c3 + s1 * s2 * s3;
     return quat.normalize(out, out);
 }
+
+
+/*
+    // Camera & cursor needs to be updated together else cursor will flicker
+    if ( isSomeMode ) {
+      world.applyToObject3D(this.three.camera);
+      world.applyToObject3D(this.cameraController.cursorMesh);
+    } else {
+      // Let threejs handle the matrix compute when in some other mode
+      cameraController.cursorMesh.matrixAutoUpdate = true;
+      three.camera.matrixAutoUpdate = true;
+      gridFloor.matrixAutoUpdate = true;
+    }
+
+    // Can not use the worldChange event to update the following objects
+    // since the UI events are slower then the render framerate which
+    // is causing flicking artifacts on specific objects. Updating when the
+    // data is dirty in the render loop removes these issues when the user
+    // updates the world orientation.
+    if (world.isDirty){
+      world.applyToObject3D( gridFloor );
+      world.isDirty = false;
+    }
+*/
+
+class WorldOrientationNEWER {
+  // #region MAIN
+  offset        = [0, 0, 0];        // Offset position
+  rotation      = [0, 0, 0];        // Euler in Angles
+  matrix        = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  quaternion    = [0, 0, 0, 1];
+  events        = new EventTarget();
+  isDirty       = false;
+
+  constructor() {}
+  // #endregion
+
+  // #region METHODS
+  reset() {
+    this.offset[0]   = 0;
+    this.offset[1]   = 0;
+    this.offset[2]   = 0;
+    this.rotation[0] = 0;
+    this.rotation[1] = 0;
+    this.rotation[2] = 0;
+    this.updateMatrix();
+    return this;
+  }
+
+  update(pos, rot) {
+    if(pos) vec3.copy( this.offset, pos );
+    if(rot) vec3.copy( this.rotation, rot );
+
+    this.updateMatrix();
+    return this;
+  }
+
+  updateMatrix(){
+    // Convert euler to quaternions first
+    eulerYXZ_Quat(this.quaternion, this.rotation);
+
+    // Update Matrix that be applied to 3d objects
+    // mat4.fromRotationTranslation(this.matrix, this.quaternion, this.offset);
+    mat4.fromQuat(this.matrix, this.quaternion);
+    this.emit('worldChange');
+
+    this.isDirty = true;
+    return this;
+  }
+  // #endregion
+
+  // #region APPLYING TRANSFORMATIONS
+  transformVec3( pos ){
+    const p = vec3.add( [0, 0, 0], this.offset, pos );
+    vec3.transformQuat( p, p, this.quaternion );
+    return p;
+  }
+
+  /** Apply world orientation to a transform ( Pos & Quat ) */
+  applyToTransform( pos = [0, 0, 0], rot = [0, 0, 0, 1] ){
+    const p = vec3.add([0, 0, 0], this.offset, pos);
+    vec3.transformQuat(p, p, this.quaternion);
+
+    const r = quat.mul([], this.quaternion, rot);
+    return [ p, r ];
+  }
+
+  /** Apply world orientation to a ThreeJS object, will disable auto computing the object's matrices */
+  applyToObject3D( obj ){
+    // First compute the camera's matrix using its current transform
+    // In this instance transformation is done backwards by applying the offset
+    // translation first then the offset rotation.
+    const m = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ];
+
+    // Apply world offset to object's position first
+    const p = vec3.add(
+      [ 0, 0, 0 ],
+      this.offset,
+      obj.position.toArray(),
+    );
+
+    // Create model matrix for the object.
+    mat4.fromRotationTranslationScale(
+      m,
+      obj.quaternion.toArray(),
+      p,
+      obj.scale.toArray(),
+    );
+
+    // Then apply the world rotation to the model matrix
+    mat4.mul( m, this.matrix, m );
+
+    // Then update the object's matrices
+    obj.matrixAutoUpdate = false; // Disable any auto updating from threejs's renderer
+    obj.matrix.fromArray( m );
+    obj.matrixWorld.fromArray( m ); // Need to update this too, camera doesn't work well without it
+    return this;
+  }
+  // #endregion
+
+  // #region EVENTS
+  on( evtName, fn ){ this.events.addEventListener(evtName, fn, {once: false}); return this; }
+  off( evtName, fn ){ this.events.removeEventListener(evtName, fn); return this; }
+  once( evtName, fn ){ this.events.addEventListener(evtName, fn, {once: true}); return this; }
+  emit( evtName, data = null ){
+    const evt = !data
+      ? new Event(evtName, { bubbles: false, cancelable: true, composed: false } )
+      : new CustomEvent(evtName, {
+          detail        : data,
+          bubbles       : false,
+          cancelable    : true,
+          composed      : false,
+        });
+    this.events.dispatchEvent( evt );
+    return this;
+  }
+  // #endregion
+}
+
+
 </script>
 
 <style>

@@ -806,7 +806,7 @@ class PointColorizer{
             // BIND OUTPUT BUFFERS & EXECUTE
             
             // Color Output
-            gl.bindBufferBase( gl.TRANSFORM_FEEDBACK_BUFFER, 0, atrCol.buffer );  // Bind color as output @ LOC 0
+            gl.bindBufferBase( gl.TRANSFORM_FEEDBACK_BUFFER, 0, atrPos.buffer );  // Bind color as output @ LOC 0
 
             // Execute
             gl.beginTransformFeedback( gl.POINTS );

@@ -1,0 +1,88 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE } from '../lib/Starter.js';
+
+let App;
+
+window.addEventListener( "load", _=>{
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:true, grid:true } );
+    App.setCamera( 0, 40, 6 ).render();
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    let geo     = getGeo();
+    let mat     = getRawShader();
+    let mesh    = new THREE.Mesh( geo, mat );
+
+    App.add( mesh );
+});
+
+
+function getGeo(){
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const indices  = [ 0, 1, 2, 2, 3, 0 ];
+
+    // Quad Facing Up, Top-Left Corner Origin. Good setup for Tiling.
+    const vertices = new Float32Array([
+        0, 0, 0,                        
+        0, 0, 1,
+        1, 0, 1,
+        1, 0, 0,
+    ]);
+
+    const inst_pos = new Uint32Array([ 0, 1, 2, 3 ]);
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Define Geometry Object
+    const bGeo = new THREE.InstancedBufferGeometry();
+    bGeo.setIndex( indices );
+    bGeo.setAttribute( "position", new THREE.BufferAttribute( vertices, 3 ) );
+    bGeo.setAttribute( "i_pos",    new THREE.InstancedBufferAttribute( inst_pos, 1 ) );
+
+    bGeo.instanceCount = inst_pos.length;
+
+    return bGeo;
+}
+
+
+function getRawShader(){
+    const mat = new THREE.RawShaderMaterial({ 
+        vertexShader	: VERT_SRC, 
+        fragmentShader	: FRAG_SRC, 
+        transparent 	: true,
+        side            : THREE.DoubleSide,
+        uniforms 		: {
+            color   : { value : [0,1,1] },
+        } 
+    });
+
+    return mat;
+}
+
+
+const VERT_SRC = `#version 300 es
+in vec3 position;
+in uint i_pos;
+
+uniform mat4 modelViewMatrix;
+uniform mat4 projectionMatrix;
+
+void main(){
+    vec3 pos = position;
+    pos.x   += float( i_pos ) * 1.5;
+
+    vec4 wPos	= modelViewMatrix * vec4( pos, 1.0 );
+    gl_Position	= projectionMatrix * wPos;	
+}
+`;
+
+const FRAG_SRC = `#version 300 es
+precision mediump float;
+
+out vec4 out_color;
+uniform vec3 color;
+
+void main(){
+    out_color = vec4( color, 1.0 );
+}`;
+
+</script></body></html>
