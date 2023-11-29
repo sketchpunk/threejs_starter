@@ -1,0 +1,41 @@
+//https://www.youtube.com/watch?v=L-Lsfu4ab74&
+//https://www.youtube.com/watch?v=jc2IthslyzM
+
+findNearestPlane( points, derStep, step, iter ){
+    loc = avg( points );
+
+    norm = [0,1,0];
+
+    for( let i=0; i < iter; i++ ){
+
+        for( let j=0; j<3; j++ ){
+            score1 = getNearestPlaneCost( points, loc, norm )
+
+            dir = [0,0,0];
+            dir[ j ] = 1;
+            dir *= derStep;
+            dir += norm;
+            dir = normalize( dir );
+
+            score2 = getNearestPlaneCost( points, loc, dir )
+
+            norm[j] += (score1-score2) / derStep * step;
+        }
+
+        normalize( norm, norm );
+
+    }
+
+    return [ loc, norm ];
+}
+
+getNearestPlaneCost( points, loc, norm ){
+    sum = 0;
+    offset = [0,0,0]
+    for( p of points ){
+        offset = p - loc;
+        sum += sqr( abs( dot( offset, norm ) ) ); // Dont really need abs as sqr will remove neg
+    }
+
+    return sum;
+}
