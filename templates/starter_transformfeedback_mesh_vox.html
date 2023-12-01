@@ -1,0 +1,1072 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title></title></head>
+<style>canvas{ display:block; } body, html { padding:0px; margin:0px; width:100%; height:100%; }</style>
+<body><script src="/import-map.js"></script><script type="module">
+import useThreeWebGL2, { THREE, useDarkScene, useVisualDebug } from '../lib/useThreeWebGL2.js';
+
+// #region MAIN
+let Debug;
+let App   = useDarkScene( useThreeWebGL2( ) );
+let Ref   = {};
+
+window.addEventListener( 'load', async _=>{
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Setup
+    App.sphericalLook( 0, 20, 5 );
+    Debug = await useVisualDebug( App );
+
+    // testVoxel();
+    // testVoxelRender();
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const geo   = new THREE.SphereGeometry( 1, 5, 5 );
+    geo.computeBoundingBox();
+
+    const gScl  = 1.1;
+    const gMin  = geo.boundingBox.min.toArray();
+    const gMax  = geo.boundingBox.max.toArray();
+    const gSize = [
+        ( gMax[0] - gMin[0] ) * gScl,
+        ( gMax[1] - gMin[1] ) * gScl,
+        ( gMax[2] - gMin[2] ) * gScl,
+    ];
+
+    const mat1   = new THREE.MeshPhongMaterial( { color: 0x00ffff } ); 
+    const mesh1  = new THREE.Mesh( geo, mat1 ); 
+    mesh1.position.x=-2;
+    App.scene.add( mesh1 );
+
+    Ref.tex = geoToDataTexture( App.renderer.getContext(), geo );
+    // console.log( Ref.tex );
+    // console.log( geo );
+
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    Ref.vox = new VoxelChunk().fitSize( gSize, 20, true );
+
+    console.log( Ref.vox.count );
+
+    // Visualize Voxel Grid
+    Debug.ln.box( Ref.vox.minBound, Ref.vox.maxBound, 0x00ffff );
+    // let cor=[0,0,0], mid=[0,0,0];
+    // for( let i=0; i < Ref.vox.count; i++ ){
+    //     Ref.vox.idxCoord( i, cor );
+    //     Ref.vox.coordMidPoint( cor, mid );
+    //     Debug.pnt.add( mid, 0x505050, 2 );
+    // }
+
+    // for( let i=0; i < Ref.vox.count; i++ ) Ref.vox.cells[i] = 1; //( Math.random() > 0.5)?1:0;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    Ref.sh = new GLComputeShader( App.renderer.getContext(), C_SRC )
+        .setUniform( 'vCellSize', Ref.vox.cellSize )
+        .setUniform( 'vXZCount', Ref.vox.xzCount )
+        .setUniform( 'vDimension', Ref.vox.dimension )
+        .setUniform( 'vMin', Ref.vox.minBound )
+        .setUniform( 'triCnt', Ref.tex.rowLen )
+        .setUniform( 'texTri', Ref.tex.ref );
+
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const box  = new THREE.BoxGeometry( 1, 1, 1 ); 
+    const iGeo = new THREE.InstancedBufferGeometry();
+    iGeo.setIndex( Array.from( box.index.array ) ); // 3Js flips out, need to pass JS Array
+    iGeo.setAttribute( 'position', box.attributes.position );
+    iGeo.setAttribute( 'normal', box.attributes.normal );
+    iGeo.setAttribute( 'inst', new THREE.InstancedBufferAttribute( Ref.vox.cells, 1 ) );
+    iGeo.instanceCount = Ref.vox.count;
+
+    const mat  = instMaterial( Ref.vox );
+    const mesh = new THREE.Mesh( iGeo, mat );
+    App.scene.add( mesh );
+    
+    App.render(); // Render scene once so GL buffers exist in Attributes
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    console.time( 'compute' );
+    TransformFeedback.compute( App.renderer, Ref.sh, { vox: iGeo.attributes.inst } );
+    console.timeEnd( 'compute' );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.renderLoop();
+});
+
+// #endregion
+
+// #region TESTING
+function testVoxel(){
+    // const chunk = new VoxelChunk().fitSize( [2,1,1], 2, true );
+    const chunk = new VoxelChunk().fitSize( [2,2,2], 3, true );
+    Debug.ln.box( chunk.minBound, chunk.maxBound, 0x00ffff );
+
+    let cor=[0,0,0]
+    let min=[0,0,0];
+    let max=[0,0,0];
+    let mid=[0,0,0];
+
+    for( let i=0; i < chunk.count; i++ ){
+        // console.log( i, chunk.idxCoord( i ) );
+        chunk.idxCoord( i, cor );
+        chunk.coordBound( cor, min, max );
+        chunk.coordMidPoint( cor, mid );
+        Debug.ln.box( min, max, 0x00ffff );
+        Debug.pnt.add( mid, 0x00ff00, 3 );
+    }
+}
+
+function testVoxelRender(){
+    const chunk = new VoxelChunk().fitSize( [2,1,1], 2, true );
+    for( let i=0; i < chunk.count; i++ ) chunk.cells[i] = ( Math.random() > 0.5)?1:0;
+
+    const box  = new THREE.BoxGeometry( 1, 1, 1 ); 
+    const iGeo = new THREE.InstancedBufferGeometry();
+    iGeo.setIndex( Array.from( box.index.array ) ); // 3Js flips out, need to pass JS Array
+    iGeo.setAttribute( 'position', box.attributes.position );
+    iGeo.setAttribute( 'normal', box.attributes.normal );
+    iGeo.setAttribute( 'inst', new THREE.InstancedBufferAttribute( chunk.cells, 1 ) );
+    iGeo.instanceCount =  chunk.count;
+
+    const mat  = instMaterial( chunk );
+    const mesh = new THREE.Mesh( iGeo, mat );
+    App.scene.add( mesh );
+}
+// #endregion
+
+// #region MATERIALS
+// Voxel Instance Shader
+function instMaterial( chunk ){
+    const mat = new THREE.RawShaderMaterial({        
+        uniforms    : {
+            vCellSize   : { type:'float', value:chunk.cellSize },
+            vXZCount    : { type:'int', value:chunk.xzCount },
+            vDimension  : { type:'ivec3', value:chunk.dimension },
+            vMin        : { type:'vec3', value:chunk.minBound },
+        },
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        vertexShader : `#version 300 es
+        precision highp float;
+
+        in vec3 position;
+        in vec3 normal;
+        in uint inst;
+
+        uniform mat4 modelMatrix;
+        uniform mat4 viewMatrix;
+        uniform mat4 projectionMatrix;
+
+        uniform float vCellSize;
+        uniform int   vXZCount;
+        uniform ivec3 vDimension;
+        uniform vec3  vMin;
+
+        out vec3 fragWPos;
+        out vec3 fragNorm;
+
+        ////////////////////////////////////////////////////////////////////////
+
+        // Compute center point at voxel coordinate
+        vec3 coordMidPoint( ivec3 coord ){
+            return vec3( coord ) * vCellSize + vMin + ( vCellSize * 0.5 );
+        }
+
+        // Convert Index to Voxel Coordinate
+        ivec3 idxCoord( int i ){
+            int y   = i / vXZCount;            // How Many Y Levels Can We Get?
+            int xz  = i - ( y * vXZCount );    // Subtract Y Levels from total, To get remaining Layer
+            int z   = xz / vDimension.x;       // How many rows in the last layer can we get?
+            int x   = xz - z * vDimension.x;   // With all the rows removed, how many left
+            return ivec3( x, y, z );
+        }
+
+        ////////////////////////////////////////////////////////////////////////
+    
+        void main(){
+            
+            if( inst == 0u ){
+                // VOXEL OFF
+                gl_Position = vec4( 0.0 );
+            }else{
+                // VOXEL ON
+                // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                // Voxel Position
+                ivec3 coord = idxCoord( gl_InstanceID );
+                vec3 voxMid = coordMidPoint( coord );
+                vec3 pos    = position * vCellSize + voxMid; // * float( inst )
+                
+                // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                // Output
+                vec4 wpos       = modelMatrix * vec4( pos , 1.0 );
+
+                fragWPos        = wpos.xyz;
+                fragNorm        = ( modelMatrix * vec4( normal, 0.0 ) ).xyz;
+
+                gl_Position     = projectionMatrix * viewMatrix * wpos;
+            }
+        }`,
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        fragmentShader	: `#version 300 es
+        precision mediump float;
+                
+        out vec4 outColor;
+        in  vec3 fragWPos;
+        in  vec3 fragNorm;
+
+        ////////////////////////////////////////////////////////////////////////
+
+        void main(){
+            // outColor = vec4( 1.0, 0.0, 0.0, 1.0 );
+
+            // Lambert Lighting
+            vec3 lightWPos = vec3( 2.0, 10.0, 4.0 );
+            float NdL      = dot( fragNorm, normalize( lightWPos - fragWPos ) );
+            NdL            = NdL * 0.5 + 0.5;                    // Remap -1:0 to 0:1
+            NdL            = clamp( 0.0, 1.0, NdL );             // Help remove any midtone shadows, don't notice it using planes
+            NdL            = NdL * NdL;                          // Valve's Half Lambert, just curves the light value
+
+            outColor.a   = 1.0;
+            outColor.rgb = vec3( 0.0, 1.0, 0.0 ) * NdL;
+        }`,
+    });
+
+    return mat;
+}
+// #endregion
+
+// #region HELPERS
+function geoToDataTexture( gl, geo ){
+    const verts     = geo.attributes.position.array;
+    const indie     = geo.index.array;
+    const triCnt    = indie.length / 3;
+    const dt        = new GLFloatTexture( gl, 3, triCnt, 3 ); // 3xN Texture using RGB
+
+    console.log( triCnt );    
+
+    let a, b, c, ii;
+    for( let i=0; i < triCnt; i++ ){
+        ii = i * 3;
+        a  = indie[ ii+0 ] * 3;
+        b  = indie[ ii+1 ] * 3;
+        c  = indie[ ii+2 ] * 3;
+
+        // console.log( ii, a, b, c );
+        // console.log( 
+        //     verts[ a+0 ],
+        //     verts[ a+1 ],
+        //     verts[ a+2 ],
+        //     verts[ b+0 ],
+        //     verts[ b+1 ],
+        //     verts[ b+2 ],
+        //     verts[ c+0 ],
+        //     verts[ c+1 ],
+        //     verts[ c+2 ],
+        // )
+
+        // Debug.pnt.add( [ verts[ a+0 ], verts[ a+1 ], verts[ a+2 ] ], 0x00ff00, 3 );
+        // Debug.pnt.add( [ verts[ b+0 ], verts[ b+1 ], verts[ b+2 ] ], 0x00ff00, 3 );
+        // Debug.pnt.add( [ verts[ c+0 ], verts[ c+1 ], verts[ c+2 ] ], 0x00ff00, 3 );
+
+        dt.setRaw(
+            i,
+            verts[ a+0 ],
+            verts[ a+1 ],
+            verts[ a+2 ],
+            verts[ b+0 ],
+            verts[ b+1 ],
+            verts[ b+2 ],
+            verts[ c+0 ],
+            verts[ c+1 ],
+            verts[ c+2 ],
+        );
+    }
+
+    dt.upload();
+    return dt;
+}
+// #endregion
+
+
+const C_SRC = `#version 300 es
+// precision highp float;
+
+uniform float vCellSize;
+uniform int   vXZCount;
+uniform ivec3 vDimension;
+uniform vec3  vMin;
+
+uniform int   triCnt;       // How many triangles to test
+
+// Datatexture storing 3xN RGB Float32 Data
+// uniform highp sampler2D texTri; // Doesn't crash compiler but uniform gets treated as its not being used
+uniform sampler2D texTri;
+
+flat out uint vox;
+
+// #region INTERSECTION
+
+// Original : https://gist.github.com/yomotsu/d845f21e2e1eb49f647f
+// Prototype Javascript Version : https://bitbucket.org/sketchpunk/sketchpunk.bitbucket.io/src/master/src/threejs/autoskinning/oito/geometry/Intersect.js
+    // int triangle_aabb( vec3 a, vec3 b, vec3 c, vec3 minBox, vec3 maxBox ){
+    int triangle_aabb( vec3 a, vec3 b, vec3 c, vec3 center, float halfLen ){
+        float p0;
+        float p1;
+        float p2;
+        float r;
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Compute box center and extents of AABoundingBox (if not already given in that format)
+        // const center = Vec3.lerp(minBox, maxBox, 0.5);
+        // vec3 center = minBox * 0.5 + maxBox * 0.5;
+
+        // const extents = Vec3.sub(maxBox, center);
+        // vec3 extents = maxBox - center;
+        vec3 extents = vec3( halfLen );
+
+        // Translate triangle as conceptually moving AABB to origin
+        // const v0 = Vec3.sub(a, center), v1 = Vec3.sub(b, center), v2 = Vec3.sub(c, center);
+        vec3 v0 = a - center;
+        vec3 v1 = b - center;
+        vec3 v2 = c - center;
+        
+        // Compute edge vectors for triangle
+        // const f0 = Vec3.sub(v1, v0), f1 = Vec3.sub(v2, v1), f2 = Vec3.sub(v0, v2);
+        vec3 f0 = v1 - v0;
+        vec3 f1 = v2 - v1;
+        vec3 f2 = v0 - v2;
+        
+        // Test axes a00..a22 (category 3)
+        vec3 a00 = vec3(0, -f0[2], f0[1]);
+        vec3 a01 = vec3(0, -f1[2], f1[1]); 
+        vec3 a02 = vec3(0, -f2[2], f2[1]); 
+        vec3 a10 = vec3(f0[2], 0, -f0[0]); 
+        vec3 a11 = vec3(f1[2], 0, -f1[0]); 
+        vec3 a12 = vec3(f2[2], 0, -f2[0]); 
+        vec3 a20 = vec3(-f0[1], f0[0], 0); 
+        vec3 a21 = vec3(-f1[1], f1[0], 0); 
+        vec3 a22 = vec3(-f2[1], f2[0], 0);
+
+        //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Axis Testing
+        
+        /*
+        p0 = v0.dot( a00 );
+        p1 = v1.dot( a00 );
+        p2 = v2.dot( a00 );
+        r  = extents[1] * Math.abs( f0[2] ) + extents[2] * Math.abs( f0[1] );
+        if( Math.max( -Math.max( p0, p1, p2 ), Math.min( p0, p1, p2 ) ) > r ) return false;
+        */
+
+        // const axis_test = [
+        //     [a00, f0, 1, 2],
+        //     [a01, f1, 1, 2],
+        //     [a02, f2, 1, 2],
+        //     [a10, f0, 0, 2],
+        //     [a11, f1, 0, 2],
+        //     [a12, f2, 0, 2],
+        //     [a20, f0, 0, 1],
+        //     [a21, f1, 0, 1],
+        //     [a22, f2, 0, 1],
+        // ];
+
+        
+        vec3[9] aryAxis = vec3[9]( a00, a01, a02, a10, a11, a12, a20, a21, a22 );
+        vec3[9] aryEdge = vec3[9]( f0, f1, f2, f0, f1, f2, f0, f1, f2 );
+        int[9] aryAA    = int[9]( 1, 1, 1, 0, 0, 0, 0, 0, 0 );
+        int[9] aryBB    = int[9]( 2, 2, 2, 2, 2, 2, 1, 1, 1 );
+
+        // let i, aa, // First Axis Component
+        // bb, // Second Axis Component
+        // ann, // Axis Point
+        // fn; // Triangle Vector Length Edges
+
+        for ( int i=0; i < 9; i++ ){
+        //     ann = i[0];
+        //     fn = i[1];
+        //     aa = i[2];
+        //     bb = i[3];
+        
+            // Project all 3 vertices of the triangle onto the seperating axis
+        //     p0 = v0.dot(ann);
+        //     p1 = v1.dot(ann);
+        //     p2 = v2.dot(ann);
+
+            p0 = dot( v0, aryAxis[i] );
+            p1 = dot( v1, aryAxis[i] );
+            p2 = dot( v2, aryAxis[i] );
+
+
+            // Project the aabb onto the seperating axis
+        //     r = extents[aa] * Math.abs(fn[bb]) + extents[bb] * Math.abs(fn[aa]);
+            r = extents[ aryAA[i] ] * 
+                abs( aryEdge[i][ aryBB[i] ] ) + 
+                extents[ aryBB[i] ] *
+                abs( aryEdge[i][ aryAA[i] ] );
+
+        //     // Axis is a separating axis, then false
+        //     // Actual test, basically see if either of the most extreme of the triangle points intersects r.
+        //     // Points of the projected triangle are outside the projected half-length of the aabb
+        //     // the axis is seperating and we can exit.
+        //     if (Math.max(-Math.max(p0, p1, p2), Math.min(p0, p1, p2)) > r)
+        //         return false;
+            if( max( 
+                  -max( p0, max( p1, p2 ) ), 
+                   min( p0, min( p1, p2 ) ) 
+                ) > r 
+            ) return 0;
+        }
+
+        // //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // // Test the three axes corresponding to the face normals of AABB b (category 1). Exit if...
+        // // ... [-extents.x, extents.x] and [min(v0.x,v1.x,v2.x), max(v0.x,v1.x,v2.x)] do not overlap
+        // if (Math.max(v0.x, v1.x, v2.x) < -extents.x || Math.min(v0.x, v1.x, v2.x) > extents.x)
+        //     return false;
+
+        if( max( v0.x, max( v1.x, v2.x ) ) < -extents.x || 
+            min( v0.x, min( v1.x, v2.x ) ) > extents.x
+        ) return 0;
+
+        // // ... [-extents.y, extents.y] and [min(v0.y,v1.y,v2.y), max(v0.y,v1.y,v2.y)] do not overlap
+        // if (Math.max(v0.y, v1.y, v2.y) < -extents.y || Math.min(v0.y, v1.y, v2.y) > extents.y)
+        //     return false;
+
+        if( max( v0.y, max( v1.y, v2.y ) ) < -extents.y || 
+            min( v0.y, min( v1.y, v2.y ) ) > extents.y
+        ) return 0;
+
+        // // ... [-extents.z, extents.z] and [min(v0.z,v1.z,v2.z), max(v0.z,v1.z,v2.z)] do not overlap
+        // if (Math.max(v0.z, v1.z, v2.z) < -extents.z || Math.min(v0.z, v1.z, v2.z) > extents.z)
+        //     return false;
+        
+        if( max( v0.z, max( v1.z, v2.z ) ) < -extents.z || 
+            min( v0.z, min( v1.z, v2.z ) ) > extents.z
+        ) return 0;
+
+        // //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // // Intersection AABB-Plane
+        // // Test separating axis corresponding to triangle face normal (category 2)
+        // // Face Normal is -ve as Triangle is clockwise winding (and XNA uses -z for into screen)
+        
+        // const planeNorm = Vec3.cross(f1, f0).norm();
+        // const planeConst = planeNorm.dot(a);
+
+        vec3 planeNorm   = normalize( cross( f1, f0 ) );
+        float planeConst = dot( planeNorm, a );
+
+        // r = extents[0] * Math.abs(planeNorm[0]) +
+        //     extents[1] * Math.abs(planeNorm[1]) +
+        //     extents[2] * Math.abs(planeNorm[2]);
+
+        r = extents[0] * abs( planeNorm[0] ) +
+            extents[1] * abs( planeNorm[1] ) +
+            extents[2] * abs( planeNorm[2] );
+
+        // const s = Math.abs(planeNorm.dot(center) - planeConst);
+        // return (s <= r);
+
+        float s = abs( dot( planeNorm, center ) - planeConst );
+        return ( s <= r )? 1 : 0;
+
+        // return 0;
+    }
+// #endregion
+
+// #region TRI DATA //////////////////////////////////////////////////////////////////
+
+struct Tri{
+    vec3 a;
+    vec3 b;
+    vec3 c;
+};
+
+Tri getTriAt( int i ){
+    return Tri(
+        texelFetch( texTri, ivec2( 0, i ), 0 ).rgb,
+        texelFetch( texTri, ivec2( 1, i ), 0 ).rgb,
+        texelFetch( texTri, ivec2( 2, i ), 0 ).rgb
+    );
+}
+
+// #endregion
+
+// #region VOXEL ////////////////////////////////////////////////////////////////
+
+// Compute center point at voxel coordinate
+vec3 coordMidPoint( ivec3 coord ){
+    return vec3( coord ) * vCellSize + vMin + ( vCellSize * 0.5 );
+}
+
+// Convert Index to Voxel Coordinate
+ivec3 idxCoord( int i ){
+    int y   = i / vXZCount;            // How Many Y Levels Can We Get?
+    int xz  = i - ( y * vXZCount );    // Subtract Y Levels from total, To get remaining Layer
+    int z   = xz / vDimension.x;       // How many rows in the last layer can we get?
+    int x   = xz - z * vDimension.x;   // With all the rows removed, how many left
+    return ivec3( x, y, z );
+}
+
+// #endregion
+
+void main(){
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Voxel Position
+    ivec3 coord   = idxCoord( gl_VertexID );
+    vec3 voxMid   = coordMidPoint( coord );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    Tri t;
+    int isHit;
+    for( int i=0; i < triCnt; i++ ){
+        t     = getTriAt( i );
+        isHit = triangle_aabb( t.a, t.b, t.c, voxMid, abs( vCellSize * 0.5 ) );
+        if( isHit == 1 ){
+            vox = 1u;
+            break;
+        }
+    }
+        
+    // Tri t = getTriAt( 0 );
+    // vox   = uint( t.a.y );
+
+    // int isHit = triangle_aabb( t.a, t.b, t.c, voxMid, abs( vCellSize * 0.5 ) );
+    // vox = uint( isHit ); 
+    // vox = 1u;
+}`;
+
+
+class VoxelChunk{
+    // #region MAIN
+    cells       = null;
+    cellSize    = 0;        // Size size of a voxel
+    count       = 0;        // Total Voxel Count
+    xzCount     = 0;        // x cell cnt * z cell cnt
+    minBound    = [0,0,0];
+    maxBound    = [1,1,1];
+    dimension   = [1,1,1];
+    constructor(){}
+    // #endregion
+
+    // #region SETTERS
+    // Try to subdivide dimension
+    fitSize( size=[2,1,1], div=2, centered=true ){
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Found how many voxels can be fit in the size
+        this.cellSize     = Math.min( size[0] / div, size[1] / div, size[2] / div );
+        this.dimension[0] = Math.ceil( size[0] / this.cellSize );
+        this.dimension[1] = Math.ceil( size[1] / this.cellSize );
+        this.dimension[2] = Math.ceil( size[2] / this.cellSize );
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Counts
+        this.xzCount = this.dimension[0] * this.dimension[2];
+        this.count   = this.dimension[1] * this.xzCount;
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Bounding
+        if( centered ){
+            this.maxBound[0] = this.dimension[0] * this.cellSize * 0.5;
+            this.maxBound[1] = this.dimension[1] * this.cellSize * 0.5;
+            this.maxBound[2] = this.dimension[2] * this.cellSize * 0.5;
+            this.minBound[0] = -this.maxBound[0];
+            this.minBound[1] = -this.maxBound[1];
+            this.minBound[2] = -this.maxBound[2];
+        }else{
+            this.minBound[0] = 0;
+            this.minBound[1] = 0;
+            this.minBound[2] = 0;
+            this.maxBound[0] = this.dimension[0] * this.cellSize;
+            this.maxBound[1] = this.dimension[1] * this.cellSize;
+            this.maxBound[2] = this.dimension[2] * this.cellSize;
+        }
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Buffer
+        this.cells = new Uint32Array( this.count );
+        return this;
+    }
+    // #endregion
+
+    // #region GETTERS
+    // Get the cell min/max boundary from voxel coordinates
+    coordBound( coord, minOut, maxOut ){
+        minOut[0] = coord[0] * this.cellSize + this.minBound[0];
+        minOut[1] = coord[1] * this.cellSize + this.minBound[1];
+        minOut[2] = coord[2] * this.cellSize + this.minBound[2];
+        maxOut[0] = (coord[0] + 1) * this.cellSize + this.minBound[0];
+        maxOut[1] = (coord[1] + 1) * this.cellSize + this.minBound[1];
+        maxOut[2] = (coord[2] + 1) * this.cellSize + this.minBound[2];
+    }
+
+    // Get the center point of a cell
+    coordMidPoint( coord, out ){
+        const h = this.cellSize * 0.5;
+        out[0]  = coord[0] * this.cellSize + this.minBound[0] + h;
+        out[1]  = coord[1] * this.cellSize + this.minBound[1] + h;
+        out[2]  = coord[2] * this.cellSize + this.minBound[2] + h;
+    }
+    // #endregion
+
+    // #region COORDINATE
+    // Using Voxel Coordinates, Gets the Cell Array Index
+    coordIdx( coord ){
+        // ( xLen * zLen * y ) + ( xLen * z ) + x
+        return this.xzCount * coord[1] + this.dimension[ 0 ] * coord[2] + coord[0];
+    }
+
+    // Compute voxel coordinate from cell flat index
+    idxCoord( i, out=[0,0,0] ){
+        const y     = Math.floor( i / this.xzCount );       // How Many Y Levels Can We Get?
+        const xz    = i - y * this.xzCount;                 // Subtract Y Levels from total, To get remaining Layer
+        const z     = Math.floor( xz / this.dimension[0] ); // How many rows in the last layer can we get?
+        out[0]      = xz - z * this.dimension[0];
+        out[1]      = y;
+        out[2]      = z;
+        return out;
+    }
+    // #endregion
+}
+
+class TransformFeedback{
+    static ref = null;  // Reference to TransformFeedback GL Object
+
+    static compute( renderer, sh, bufMap, exeCnt=0 ){        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Prepare
+        const rend = renderer;
+        const gl   = rend.getContext();
+
+        this.preCompute( gl );
+        this.loadShader( gl, sh );
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Enable Feedback with fragment stage disabled
+        gl.bindTransformFeedback( gl.TRANSFORM_FEEDBACK, this.ref );   // Bind TransformFeedback
+        gl.enable( gl.RASTERIZER_DISCARD ); // Disable fragment shader, its not needed
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Buffer Bindings
+        // TODO: Finish working binding input buffers
+        // const inputDrawCnt  = this.bindOutputs( rend, gl, sh, bufMap );  
+        const inputDrawCnt  = 0;
+        const outputDrawCnt = this.bindOutputs( rend, gl, sh, bufMap );
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Execute 
+        const drawSize = ( exeCnt > 0 )? exeCnt : 
+            ( inputDrawCnt > 0 )? inputDrawCnt : outputDrawCnt;
+
+        gl.beginTransformFeedback( gl.POINTS );
+        gl.drawArrays( gl.POINTS, 0, drawSize );
+        gl.endTransformFeedback();
+
+        // // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        this.postCompute( gl );
+    }
+
+    // #region LOADERS + BINDERS
+    // Bind Input Attributes to Buffers
+    static bindInputs( rend, gl, sh, bufMap ){
+        let cnt = 0;
+        for( const [k,v] of Object.entries( sh.inputs ) ){
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            // NOTE - This wouldn't work normally in THREEJS
+            // renderer.attributes only exists in a MODIFIED library to expose GL BUFFER references
+            const buf = bufMap[ k ];
+            if( !buf ){ console.log( 'TransformFeedback.compute - Buffer not found : ', k ); continue; }
+
+            const atr = rend.attributes.get( buf );
+            if( !atr ){ console.log( 'Attribute reference not found in 3js renderer', k ); continue; }
+
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            let dType;  // GL Data Type
+            let cLen;   // Component Length
+            switch( type ){
+                case 'float'    : dType = gl.FLOAT; cLen = 1; break;
+                case 'vec2'     : dType = gl.FLOAT; cLen = 2; break;
+                case 'vec3'     : dType = gl.FLOAT; cLen = 3; break;
+                case 'vec4'     : dType = gl.FLOAT; cLen = 4; break;
+                // case 'uint'     : bType = gl.FLOAT; bSize = 1; break;
+                default: console.log( 'TransformFeedback.bindInputs - Unknown type : ', type ); break;
+            }
+
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            // NOTE: May need to support interleaved data
+            gl.bindBuffer( gl.ARRAY_BUFFER, atr.buffer );               // Bind position gl buffer
+            gl.vertexAttribPointer( v.loc, cLen, dType, false, 0, 0 );  // Setup attribute @ LOC 
+            gl.enableVertexAttribArray( v.loc );                        // Turn on Attribute slot
+
+            // Save draw size
+            cnt = buf.count / buf.itemSize;
+        }
+
+        return cnt;
+    }
+
+    // Bind Output Varyings to Buffers
+    static bindOutputs( rend, gl, sh, bufMap ){
+        let cnt = 0;
+        for( const [k,v] of Object.entries( sh.outputs ) ){
+            // --------------------------------------------
+            // Get GL reference to buffer from 3JS Renderer
+            const buf = bufMap[ k ];
+            if( !buf ){ console.log( 'TransformFeedback.compute - Buffer not found : ', k ); continue; }
+
+            const atr = rend.attributes.get( buf );
+            if( !atr ){ console.log( 'Attribute reference not found in 3js renderer', k ); continue; }
+
+            // --------------------------------------------
+            // Bind Buffer to varying location
+            gl.bindBufferBase( gl.TRANSFORM_FEEDBACK_BUFFER, v.loc, atr.buffer );
+
+            // Save draw size
+            cnt = buf.count / buf.itemSize;
+        }
+
+        return cnt;
+    }
+    
+    static loadShader( gl, sh ){
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Turn on shader
+        gl.useProgram( sh.prog );  
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Pass uniform data to shader
+        let texSlot = 0;
+        for( const u of Object.values( sh.uniforms ) ){
+
+            // ---------------------------------
+            if( u.value === null ){
+                console.log( 'TransformFeedback.loadShader - Uniform value is null : ', u );
+                continuel
+            }
+
+            // ---------------------------------
+            switch( u.type ){
+                case 'float'     : gl.uniform1f( u.loc, u.value ); break;
+                case 'vec3'      : gl.uniform3fv( u.loc, u.value ); break;
+                case 'int'       : gl.uniform1i( u.loc, u.value ); break;
+                case 'ivec3'     : gl.uniform3iv( u.loc, u.value ); break;
+                case 'uint'      : gl.uniform1ui( u.loc, u.value ); break;
+                case 'sampler2D' : 
+                    gl.uniform1i( u.loc, texSlot );             // Which slot for texture uniform to use
+                    gl.activeTexture( gl.TEXTURE0 + texSlot );  // Activate Texture Slot
+                    gl.bindTexture( gl.TEXTURE_2D, u.value );   // Bind Texture  
+                    texSlot++; // Increment for next possible texture
+                break;
+
+                default         : console.log( 'TransformFeedback.loadShader - Uniform type unknown : ', u.type ); break;
+            }
+        }
+    }
+    // #endregion
+
+    // #region COMPUTE EVENTS
+    static preCompute( gl ){
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Looks like 3JS leaves VAOs bound after rendering
+        // This breaks buffer binding for transform feedback
+        // SOOO... Make sure there are no VAO bound before running TF
+        gl.bindVertexArray( null );
+
+        // For extra protection, lets just unbind array buffers too
+        // Doesn't seem needed but since VAO was an issue, lets do this too.
+        gl.bindBuffer( gl.ARRAY_BUFFER, null );
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        if( !this.ref ) this.ref = gl.createTransformFeedback();
+    }
+
+    static postCompute( gl ){
+        gl.disable( gl.RASTERIZER_DISCARD );    // Turn on fragment shaders
+        gl.bindTransformFeedback( gl.TRANSFORM_FEEDBACK, null ); 
+        gl.useProgram( null );
+        gl.bindBuffer( gl.ARRAY_BUFFER, null );
+        gl.bindTexture( gl.TEXTURE_2D, null );
+    }
+    // #endregion
+}
+
+class GLComputeShader{
+    // #region MAIN
+    prog     = null;
+    gl       = null;
+    inputs   = {}; // { name, type, loc }
+    outputs  = {}; // { name, type, loc }
+    uniforms = {}; // { name, type, value, loc }
+
+    constructor( gl, src ){ 
+        this.gl = gl;
+        if( this._compile( src ) ){
+            this._parseInputs( src );
+            this._parseUniforms( src );
+        }
+    }
+
+    dispose(){
+        if( this.prog ) this.gl.deleteProgram( this.prog );
+        this.gl   = null;
+        this.prog = null;
+    }
+    // #endregion
+
+    // #region METHODS
+    useUniforms( ary ){
+        for( let i of ary ) this.uniforms[ i ] = this.gl.getUniformLocation( this.prog, i );
+        return this;
+    }
+
+    setUniform( vName, v ){
+        const u = this.uniforms[ vName ];
+        if( u ) u.value = v;
+        else    console.log( 'UNIFORM NAME NOT FOUND: ', vName );
+
+        return this;
+    }
+    // #endregion
+
+    // #region SHADER COMPILING
+    _compile( src ){
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Compile Shader
+        const vSh = this._compileShader( src, true );
+        if( !vSh ) return false;
+
+        const fSh = this._compileShader( '#version 300 es\nvoid main(){}', false );
+        if( !fSh ){ this.gl.deleteShader( vSh ); return false; }
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        this.prog = this._linkProgram( vSh, fSh, src );
+        
+        return !!this.prog;
+    }
+
+    _compileShader( src, isVert=true ){
+        const sh = this.gl.createShader( isVert
+            ? this.gl.VERTEX_SHADER
+            : this.gl.FRAGMENT_SHADER
+        );
+
+        this.gl.shaderSource( sh, src );
+        this.gl.compileShader( sh );
+
+        if( !this.gl.getShaderParameter( sh, this.gl.COMPILE_STATUS ) ){
+            console.log( 'SHADER COMPILE ERROR - isVert: ', isVert, 'MSG: ' , this.gl.getShaderInfoLog( sh ) );
+            this.gl.deleteShader( sh );
+            return null;
+        }
+
+        return sh;
+    }
+
+    _linkProgram( vSh, fSh, src ){
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Build Program
+        const prog = this.gl.createProgram();
+        this.gl.attachShader( prog, vSh );
+        this.gl.attachShader( prog, fSh );
+
+        // Parse the output var names & set program to use them
+        const varyings = this._parseOutputs( src );
+        this.gl.transformFeedbackVaryings( prog, varyings, this.gl.SEPARATE_ATTRIBS );
+
+        // Complete Program
+        this.gl.linkProgram( prog );
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Cleanup
+        this.gl.detachShader( prog, vSh );
+        this.gl.detachShader( prog, fSh );
+        this.gl.deleteShader( vSh );
+        this.gl.deleteShader( fSh );
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Validate
+        if( !this.gl.getProgramParameter( prog, this.gl.LINK_STATUS ) ){
+            console.log( 'LINK ERROR', this.gl.getProgramInfoLog( prog ) );
+            this.gl.deleteProgram( prog );
+            return null;
+        }
+
+        return prog;
+    }
+    // #endregion
+
+    // #region GLSL PARSER
+    _parseInputs( src ){
+        // TODO: Support attribute src that don't define location
+        // layout(location=0) in vec3 position;
+        const reInput = /layout\(location=(\d+)\)\s+in\s+(\w+)\s+(\w+)\s*;/g;
+        let result;
+
+        while( (result = reInput.exec(src)) ) {
+            this.inputs[ result[3] ] = { loc: parseInt( result[1] ), type:result[2] };
+        }
+    }
+
+    _parseOutputs( src ){
+        const reOutput = /out\s+(\w+)\s+(\w+)\s*;/g;   // uniform sampler2D tex;
+        const varyings = [];
+        let result;
+        let i = 0;
+        
+        while( (result = reOutput.exec(src)) ) {
+            this.outputs[ result[2] ] = { loc: i++, type:result[1] };
+            varyings.push( result[2] );
+        }
+
+        return varyings;
+    }
+    
+    _parseUniforms( src ){
+        const reUniform = /uniform\s+(\w+)\s+(\w+)\s*;/g; // out vec3 color;
+        let result;
+        let loc;
+
+        while( (result = reUniform.exec(src)) ){
+            loc = this.gl.getUniformLocation( this.prog, result[2] );
+            if( loc !== null )  this.uniforms[ result[2] ] = { type: result[1], loc: loc, value: null };
+            else                console.log( 'Uniform missing, may not be used : ', result[2] );
+        }
+    }
+    // #endregion
+}
+
+class GLFloatTexture{
+    // #region MAIN
+    ref            = null;  // GL Reference to GL Buffer
+    gl             = null;  // Reference to GL Context
+    colLen         = 0;     // Pixel Width
+    rowLen         = 0;     // Pixel Height
+    vecSize        = 0;     // How many pixel channels: 4 is max
+    internalFormat = 0;     // Format of channel data
+    format         = 0;     // Channel format: RB, RGB, RGBA
+    data           = null;  // Raw Buffer Data
+
+    constructor( gl, colLen=1, rowLen=2, vecSize=3 ){
+        this.gl      = gl;
+        this.colLen  = colLen;
+        this.rowLen  = rowLen;
+        this.vecSize = vecSize;
+
+        switch( vecSize ){
+            case 3:
+                this.internalFormat = WebGL2RenderingContext.RGB32F;
+                this.format         = WebGL2RenderingContext.RGB;
+                break;
+            case 4:
+                this.internalFormat = WebGL2RenderingContext.RGBA32F;
+                this.format         = WebGL2RenderingContext.RGBA;
+                break;
+            default:
+                console.error( 'GLFloatTexture - UNKNOWN VEC SIZE' );
+                break;
+        }
+
+        this.data = new Float32Array( vecSize * colLen * rowLen );
+    }
+    
+    dispose(){
+        if( this.ref ) this.gl.deleteTexture( this.ref );
+        this.gl = null;
+    }
+    // #endregion
+
+    // #region METHODS
+    set( idx, ...args ){
+        let ii = idx * this.colLen * this.vecSize;
+        let c  = 0;
+        for( let a of args ){
+            for( let i of a ) this.data[ ii++ ] = i;
+
+            // Prevent writing into next row
+            if( ++c >= this.colLen ) break;
+        }
+
+        return this;
+    }
+
+    setRaw( idx, ...args ){
+        let ii = idx * this.colLen * this.vecSize;
+        for( let a of args ) this.data[ ii++ ] = a;
+        return this;
+    }
+
+    upload(){
+        if( !this.ref ){
+            this._build();
+        }else{
+            this.gl.bindTexture( this.gl.TEXTURE_2D, this.ref );
+            this.gl.texSubImage2D( this.gl.TEXTURE_2D, 
+                0, 0, 0, 
+                this.colLen, this.rowLen, 
+                this.format, this.gl.FLOAT, 
+                this.data
+            );
+            this.gl.bindTexture( this.gl.TEXTURE_2D, null );
+        }
+
+        return this;
+    }
+    // #endregion
+
+    // #region HELPERS
+    _build(){
+        // Create & Bind
+        const tex = this.gl.createTexture();
+        this.gl.bindTexture( this.gl.TEXTURE_2D, tex );
+        
+        // No mips & no filtering
+        this.gl.texParameteri( this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST );
+        this.gl.texParameteri( this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST );
+        this.gl.texParameteri( this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE );
+        this.gl.texParameteri( this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE );
+
+         // Data might not be 4 byte aligned, so set reading by 1 byte a time
+        this.gl.pixelStorei( this.gl.UNPACK_ALIGNMENT, 1 );
+
+        // Initialize Testure buffer with Data
+        this.gl.texImage2D( this.gl.TEXTURE_2D, 0, 
+            this.internalFormat, 
+            this.colLen, this.rowLen, 0,
+            this.format, 
+            this.gl.FLOAT, 
+            this.data,
+        );
+
+        this.gl.bindTexture( this.gl.TEXTURE_2D, null );
+        this.ref = tex;
+    }
+    // #endregion
+}
+
+/*
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// COMPUTE
+
+**API**
+
+const bufMap = { vox: AttributeBuffer }
+
+const dTex  = new GLFloatDataTexture( 3, indices.length/3, 3 );
+- 3xN Texture, Each row of 3 Pixels will represent the 3 points of a triangle
+- Setup Texture to store Float32 Data & RGB Channels only, no need for the A Channel
+- Loop Indices of Geometry, Fill RGB Buffer with the 3 points of each available triangle
+
+const sh     = new GLComputeShader( gl, '' );
+sh.setUniform( 'voxRes', [1,1,1] )
+sh.setUniform( 'voxSize', 0.2 );
+sh.setUniform( 'voxMin', [-1,-1,-1] )
+sh.setUniform( 'texTris', dTex );
+
+TransformFeedback.compute( renderer, sh, bufMap );
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// RENDER
+
+- Use the same voxel render object from last prototype
+--- Maybe change it to render a line box instead, easier to examine
+    the voxel shell. In future prototype this can help since the
+    empty space will need to be filled in to make it a solid volume.
+*/
+
+</script></body></html>
