@@ -1,0 +1,356 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title></title></head>
+<style>canvas{ display:block; } body, html { padding:0px; margin:0px; width:100%; height:100%; }</style>
+<body><script src="/import-map.js"></script><script type="module">
+
+// #region IMPORTS
+import useThreeWebGL2, { THREE, useDarkScene, useVisualDebug } from '../lib/useThreeWebGL2.js';
+// #endregion
+
+// #region MAIN
+let Debug;
+let App   = useDarkScene( useThreeWebGL2( ) );
+let Ref   = {
+};
+
+// https://shaderbits.com/blog/octahedral-impostors
+// https://docs.unity3d.com/Packages/com.unity.pixyz.unity-sdk@1.0/manual/features/impostors.html
+// https://github.com/wojtekpil/Godot-Octahedral-Impostors
+
+window.addEventListener( 'load', async _=>{
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Setup
+    App.sphericalLook( 0, 20, 2 );
+    Debug       = await useVisualDebug( App );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const verts = createGrid();
+    const indie = octPlaneIndices( 1 );
+
+    // octHemi( verts );
+    octFull( verts );
+    debugFlatPoints( verts );
+
+    const normals = toSphereNormal( verts );
+
+    const geo   = geoBuffer( { vertices:verts, indices:indie, normals } );
+    const mesh  = new THREE.Mesh( geo, new THREE.MeshBasicMaterial( { color:0xffffff, flatShading:false, wireframe:true } ) ); 
+    const mesh1 = new THREE.Mesh( geo, new THREE.MeshBasicMaterial( { color:0x707070, flatShading:false, wireframe:false } ) );
+    mesh1.scale.setScalar( 0.999 );
+    
+    App.scene.add( mesh1, mesh );
+
+    console.log( geo );
+
+
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.renderLoop();
+    // App.createRenderLoop( onPreRender ).start();
+});
+
+// #region HELPERS
+function debugFlatPoints( ary ){
+    const v = [0,0,0];
+
+    for( let i=0; i < ary.length; i+=3 ){
+        v[0] = ary[ i+0 ];
+        v[1] = ary[ i+1 ];
+        v[2] = ary[ i+2 ];
+        Debug.pnt.add( v, 0x606060, 1 );
+    }
+}
+
+function geoBuffer( props ){
+    const p = Object.assign( {
+        indices     : null,
+        normal      : null,
+        uv          : null,
+        joints      : null,
+        weights     : null,
+        skinSize    : 4,
+    }, props );
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute( 'position', new THREE.BufferAttribute( 
+        ( p.vertices instanceof Float32Array )? p.vertices : new Float32Array( p.vertices ),
+        3
+    ));
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Optional vertex buffers
+    if( p.indices ) geo.setIndex( new THREE.BufferAttribute( 
+        ( p.indices instanceof Uint16Array )? p.indices : new Uint16Array( p.indices ),
+        1 
+    ));
+
+    if( p.normals ) geo.setAttribute( 'normal', new THREE.BufferAttribute( 
+        ( p.normals instanceof Float32Array )? p.normals : new Float32Array( p.normals ),
+        3
+    ));
+
+    if( p.texcoord ) geo.setAttribute( 'uv', new THREE.BufferAttribute( 
+        ( p.texcoord instanceof Float32Array )? p.texcoord : new Float32Array( p.texcoord ), 
+        2
+    ));
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Skinned Buffers
+    if( p.joints && p.weights ){
+        geo.setAttribute( 'skinWeight', new THREE.BufferAttribute(
+            ( p.weights instanceof Float32Array )? p.weights : new Float32Array( p.weights ), 
+            p.skinSize 
+        ));
+
+        geo.setAttribute( 'skinIndex',  new THREE.BufferAttribute(
+            ( p.joints instanceof Float32Array )? p.joints : new Float32Array( p.joints ), 
+            p.skinSize 
+        ));
+    }
+
+    return geo;
+}
+// #endregion
+
+// #region GENERATION
+function createGrid( xCells=6, yCells=6, width=1, height=1, useCenter=true ){
+    const   xInc   = width / xCells;
+    let     yInc   = height / yCells;
+    let     ox      = 0,    // Offset
+            oz      = 0,
+            x, z, xi, yi;
+
+    if( useCenter ){
+        ox = -width * 0.5;
+        oz = -height * 0.5;
+    }
+    
+    const out = [];
+    for( yi=0; yi <= yCells; yi++ ){
+        z = yi * yInc;
+        for( xi=0; xi <= xCells; xi++ ){
+            x = xi * xInc;
+            out.push( x+ox, 0.01, z+oz ); 
+        }
+    }
+
+    return out;
+}
+
+function toSphereNormal( ary ){
+    const rtn = new Array( ary.length );
+
+    let x, y, z, m;
+    for( let i=0; i < ary.length; i+=3 ){
+        x           = ary[i+0];
+        y           = ary[i+1];
+        z           = ary[i+2];
+
+        m           = Math.sqrt( x**2 + y**2 + z**2 );
+        rtn[i+0]    = x / m;
+        rtn[i+1]    = y / m;
+        rtn[i+2]    = z / m;
+    }
+
+    return rtn;
+}
+
+function octPlaneIndices( isFull=0, xCells=6, yCells=6 ){
+    const out   = [];
+    const xLen  = xCells + 1;
+    const xHalf = Math.floor( xCells * 0.5 );
+    const yHalf = Math.floor( yCells * 0.5 );
+
+    let a, b, c, d;
+    let r0, r1, alt
+    
+    for( let y=0; y < yCells; y++ ){
+        r0 = xLen * y;
+        r1 = xLen * ( y + 1 );
+
+        for( let x=0; x < xCells; x++ ){
+            a   = r0 + x;
+            b   = r1 + x;
+            c   = r1 + x + 1;
+            d   = r0 + x + 1;
+            alt = ( Math.floor( x / xHalf ) + Math.floor( y / yHalf ) ) % 2;
+
+            if( alt === isFull )    out.push( a,b,c, c,d,a ); // backward slash
+            else                    out.push( d,a,b, b,c,d ); // forward slash
+        }
+    }
+
+    return out;
+}
+
+// https://github.com/wojtekpil/Godot-Octahedral-Impostors/blob/v2.0-new-baker/addons/octahedral_impostors/scripts/baking/utils/octahedral_utils.gd
+function octHemi( ary ){
+    const radius = 0.5;
+    let ox, oy, x, y, z, m;
+
+    for( let i=0; i < ary.length; i+=3 ){
+        // NOTE: Original Math doesn't work using actual points
+        // but guessing it might be UV based seems to work.
+        // Since the mesh is generated as a unit quad, We can
+        // shift X & Z by half to create UV values between 0 to 1
+        // If the mesh is generated with different width/height
+        // this will break.
+        ox = ary[ i+0 ] + 0.5;  // U ??
+        oy = ary[ i+2 ] + 0.5;  // V ??
+
+        // Guessing this is UV to Hemi Normal Direction
+        x  = ox - oy;
+        z  = -1 + ox + oy;
+        y  = 1 - Math.abs( x ) - Math.abs( z );
+
+        // Normalize the direction and must use
+        // a radius of 0.5 for things to look correct
+        // Ideally this forms a unit half sphere
+        m  = Math.sqrt( x**2 + y**2 + z**2 );
+        ary[ i+0 ] = x / m * radius;
+        ary[ i+1 ] = y / m * radius;
+        ary[ i+2 ] = z / m * radius;
+    }
+}
+
+// https://github.com/wojtekpil/Godot-Octahedral-Impostors/blob/v2.0-new-baker/addons/octahedral_impostors/scripts/baking/utils/octahedral_utils.gd
+function octFull( ary ){
+    const radius = 0.5;
+    let u, v, x, y, z, m;
+    let ox, oz;
+
+    for( let i=0; i < ary.length; i+=3 ){
+        // Original math converts UV to -1 to 1 range
+        // With the points already being in a -0.5 to 0.5 range
+        // we just need to remove -1 to recreate the needed range
+        // coord * 2.0 - Vector2(1.0, 1.0)
+        u = ary[ i+0 ] * 2.0;
+        v = ary[ i+2 ] * 2.0;
+
+        // North Hemisphere
+        x = u;
+        z = v;
+        y = 1 - Math.abs( x ) - Math.abs( z );
+
+        // Fix XZ for South Hemisphere
+        if( y < 0 ){
+            // woops, make a copy of X and Z else changing
+            // x will mess up Z's math
+            ox = x;
+            oz = z;
+            x  = Math.sign( ox ) * ( 1.0 - Math.abs( oz ) );
+            z  = Math.sign( oz ) * ( 1.0 - Math.abs( ox ) );
+        }
+
+        // Normalize Position
+        m  = Math.sqrt( x**2 + y**2 + z**2 );
+        ary[ i+0 ] = x / m * radius;
+        ary[ i+1 ] = y / m * radius;
+        ary[ i+2 ] = z / m * radius;
+    }
+}
+// #endregion
+
+
+// const ii = i / 3;
+//         const yy = Math.floor( ii / 7 );
+//         const xx = ii - yy * 7;
+
+
+//     static func octa_hemisphere_enc(coord: Vector2) -> Vector3:
+// 	var position: Vector3 = Vector3(coord.x - coord.y, 0, -1.0 + coord.x + coord.y)
+// 	var absolute: Vector3 = position.abs()
+// 	position.y = 1.0 - absolute.x - absolute.z
+
+// 	return position
+
+
+// static func octa_sphere_enc(coord: Vector2) -> Vector3:
+// 	coord = coord * 2.0 - Vector2(1.0, 1.0)
+// 	var position: Vector3 = Vector3(coord.x, 0, coord.y)
+// 	var absolute: Vector3 = position.abs()
+// 	position.y = 1.0 - absolute.x - absolute.z
+
+// 	if position.y < 0:
+// 		var pos_sign: Vector3 = position.sign()
+// 		position.x = pos_sign.x * (1.0 - absolute.z)
+// 		position.z = pos_sign.z * (1.0 - absolute.x)
+
+// 	return position
+
+// vec2 recalculateUV(vec2 uv_f,  vec2 frame, vec2 xy_f, vec2 frame_size, float d_scale, sampler2D depthTexture)
+// {
+// 	//clamp for parallax sampling
+// 	uv_f = clamp(uv_f, vec2(0), vec2(1));
+// 	vec2 uv_quad = frame_size * (frame + uv_f);
+// 	//paralax
+// 	vec4 n_depth = (textureLod( depthTexture, uv_quad, 0 ));
+// 	uv_f = xy_f * (0.5-n_depth.r) * d_scale + uv_f;
+// 	//clamp parallax offset
+// 	uv_f = clamp(uv_f, vec2(0), vec2(1));
+// 	uv_f =  frame_size * (frame + uv_f);
+// 	//clamped full UV
+// 	return clamp(uv_f, vec2(0), vec2(1));
+// }
+
+
+// vec2 VecToSphereOct(vec3 pivotToCamera)
+// {
+// 	vec3 octant = sign(pivotToCamera);
+
+// 	//  |x| + |y| + |z| = 1
+// 	float sum = dot(pivotToCamera, octant);
+// 	vec3 octahedron = pivotToCamera / sum;
+
+// 	if (octahedron.y < 0f)
+// 	{
+// 		vec3 absolute = abs(octahedron);
+// 		octahedron.xz = octant.xz * vec2(1.0f - absolute.z, 1.0f - absolute.x);
+// 	}
+// 	return octahedron.xz;
+// }
+
+// vec2 VecToHemiSphereOct(vec3 pivotToCamera)
+// {
+// 	pivotToCamera.y = max(pivotToCamera.y, 0.001);
+// 	pivotToCamera = normalize(pivotToCamera);
+// 	vec3 octant = sign(pivotToCamera);
+
+// 	//  |x| + |y| + |z| = 1
+// 	float sum = dot(pivotToCamera, octant);
+// 	vec3 octahedron = pivotToCamera / sum;
+
+// 	return vec2(
+// 	octahedron.x + octahedron.z,
+// 	octahedron.z - octahedron.x);
+// }
+
+
+// //for sphere
+// vec3 OctaSphereEnc(vec2 coord)
+// {
+// 	coord = (coord - 0.5) * 2.0;
+// 	vec3 position = vec3(coord.x, 0f, coord.y);
+// 	vec2 absolute = abs(position.xz);
+// 	position.y = 1f - absolute.x - absolute.y;
+
+// 	if (position.y < 0f)
+// 	{
+// 		position.xz = sign(position.xz) * vec2(1.0f - absolute.y, 1.0f - absolute.x);
+// 	}
+
+// 	return position;
+// }
+
+// //for hemisphere
+// vec3 OctaHemiSphereEnc(vec2 coord)
+// {	
+// 	//coord = (0, 0.27)
+// 	//pos = -0.27, 0, -0.63
+	
+// 	vec3 position = vec3(coord.x - coord.y, 0f, -1.0 + coord.x + coord.y);
+// 	vec2 absolute = abs(position.xz);
+// 	position.y = 1f - absolute.x - absolute.y;
+// 	return position;
+// }
+
+</script></body></html>

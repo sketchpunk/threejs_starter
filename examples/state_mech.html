@@ -1,0 +1,286 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+
+// https://github.com/adamhaile/S/blob/master/src/S.ts
+window.addEventListener( "load", _=>{
+
+    const txt = State.value( 'x' );
+    console.log( 'Value is :', txt() );
+
+    State( ()=>console.log('In', txt() ) );
+
+    // S( 
+    //     () => document.body.textContent = `${greeting()}, ${name()}!`
+    // );
+
+});
+
+// function S<T>( fn : (v : T | undefined) => T, value? : T) : () => T {
+let Owner = null;    // owner for new computations
+let LastNode = null; // cached unused node, for re-use
+
+function State( fn, value=null ){
+
+    // if (Owner === null) console.warn("computations created without a root or parent will never be disposed");
+
+    makeComputationNode(fn, value, false, false);
+    //var { node, value } = makeComputationNode(fn, value, false, false);
+
+    // if (node === null) {
+    //     return function computation() { return _value; }
+    // } else {
+    //     return function computation() {
+    //         return node!.current();
+    //     }
+    // }
+
+}
+
+//current : T, eq? : (a : T, b : T) => boolean
+State.value = ( current, eq = null )=>{
+    const node  = new DataNode( current );
+    let   age   = -1;
+
+    return function value( update ){
+        if (arguments.length === 0) {
+            return node.current();
+        } else {
+        //     var same = eq ? eq(current, update!) : current === update;
+        //     if (!same) {
+        //         var time = RootClock.time;
+        //         if (age === time) 
+        //             throw new Error("conflicting values: " + update + " is not the same as " + current);
+        //         age = time;
+        //         current = update!;
+        //         node.next(update!);
+        //     }
+        //     return update!;
+        }
+    }
+}
+
+
+class DataNode {
+    // pending = NOTPENDING as any;   
+    // log     = null as Log | null;
+    
+    constructor( v=null ) {
+        this.value = v;
+    }
+
+    current(){
+        // if (Listener !== null) {
+        //     logDataRead(this);
+        // }
+        return this.value;
+    }
+
+    // next(value : any) {
+    //     if (RunningClock !== null) {
+    //         if (this.pending !== NOTPENDING) { // value has already been set once, check for conflicts
+    //             if (value !== this.pending) {
+    //                 throw new Error("conflicting changes: " + value + " !== " + this.pending);
+    //             }
+    //         } else { // add to list of changes
+    //             this.pending = value;
+    //             RootClock.changes.add(this);
+    //         }
+    //     } else { // not batching, respond to change now
+    //         if (this.log !== null) {
+    //             this.pending = value;
+    //             RootClock.changes.add(this);
+    //             event();
+    //         } else {
+    //             this.value = value;
+    //         }
+    //     }
+    //     return value!;
+    // }
+
+    // clock() {
+    //     return RootClockProxy;
+    // }
+}
+
+
+function getCandidateNode() {
+    // var node = LastNode;
+    // if (node === null) node = new ComputationNode();
+    // else LastNode = null;
+    // return node;
+}
+
+//fn : (v : T | undefined) => T, value : T | undefined
+function execToplevelComputation(fn, value ) {
+    // RunningClock = RootClock;
+    // RootClock.changes.reset();
+    // RootClock.updates.reset();
+
+    try {
+        return fn( value );
+    } finally {
+        Owner = null;
+        // Owner = Listener = RunningClock = null;
+    }
+}
+
+// owner : ComputationNode | null, listener : ComputationNode | null
+function finishToplevelComputation(owner, listener) {
+    if (RootClock.changes.count > 0 || RootClock.updates.count > 0) {
+        RootClock.time++;
+        try {
+            run(RootClock);
+        } finally {
+            RunningClock = null;
+            Owner = owner;
+            Listener = listener;
+        }
+    }
+}
+
+function run(clock) {
+    var running = RunningClock,
+        count = 0;
+        
+    RunningClock = clock;
+
+    clock.disposes.reset();
+    
+    // for each batch ...
+    while (clock.changes.count !== 0 || clock.updates.count !== 0 || clock.disposes.count !== 0) {
+        if (count > 0) // don't tick on first run, or else we expire already scheduled updates
+            clock.time++;
+
+        clock.changes.run(applyDataChange);
+        clock.updates.run(updateNode);
+        clock.disposes.run(dispose);
+
+        // if there are still changes after excessive batches, assume runaway            
+        if (count++ > 1e5) {
+            throw new Error("Runaway clock detected");
+        }
+    }
+
+    RunningClock = running;
+}
+
+
+
+//fn : (v : T | undefined) => T, value : T | undefined, orphan : boolean, sample : boolean) : { node: ComputationNode | null, value : T 
+function makeComputationNode(fn, value = undefined, orphan, sample ) {
+
+    let node = LastNode;
+    if( node === null ) node     = new ComputationNode()
+    else                LastNode = null;
+
+    Owner = node;
+
+    // var node     = getCandidateNode(),
+    //     owner    = Owner,
+    //     listener = Listener,
+    //     toplevel = RunningClock === null;
+        
+    // Owner = node;
+    // Listener = sample ? null : node;
+
+    try {
+        value = fn( value );
+    } finally {
+        Owner = null;
+    }
+
+    console.log( 'n', node, value );
+
+    // if (toplevel) {
+    //     value = execToplevelComputation(fn, value);
+    // } else {
+    //     value = fn(value);
+    // } 
+
+    // Owner = owner;
+    // Listener = listener;
+
+    // var recycled = recycleOrClaimNode(node, fn, value, orphan);
+
+    // if (toplevel) finishToplevelComputation(owner, listener);
+
+    // makeComputationNodeResult.node = recycled ? null : node;
+    // makeComputationNodeResult.value =  value!;
+
+    // return makeComputationNodeResult;
+}
+
+
+class ComputationNode {
+    // fn        = null as ((v : any) => any) | null;
+    // value     = undefined as any;
+    // age       = -1
+    // state     = CURRENT;
+    // source1   = null as null | Log;
+    // source1slot = 0;
+    // sources   = null as null | Log[];
+    // sourceslots = null as null | number[];
+    // log       = null as Log | null;
+    // owned     = null as ComputationNode[] | null;
+    // cleanups  = null as (((final : boolean) => void)[]) | null;
+    
+    constructor() { }
+
+    // current() {
+    //     if (Listener !== null) {
+    //         if (this.age === RootClock.time) {
+    //             if (this.state === RUNNING) throw new Error("circular dependency");
+    //             else updateNode(this); // checks for state === STALE internally, so don't need to check here
+    //         }
+    //         logComputationRead(this);
+    //     }
+
+    //     return this.value;
+    // }
+
+    // clock() {
+    //     return RootClockProxy;
+    // }
+}
+
+
+// node : ComputationNode, fn : (v : T | undefined) => T, value : T, orphan : boolean
+function recycleOrClaimNode(node, fn, value, orphan) {
+    // var _owner = orphan || Owner === null || Owner === UNOWNED ? null : Owner,
+    //     recycle = node.source1 === null && (node.owned === null && node.cleanups === null || _owner !== null),
+    //     i;
+
+    // if (recycle) {
+    //     LastNode = node;
+
+    //     if (_owner !== null) {
+    //         if (node.owned !== null) {
+    //             if (_owner.owned === null) _owner.owned = node.owned;
+    //             else for (i = 0; i < node.owned.length; i++) {
+    //                 _owner.owned.push(node.owned[i]);
+    //             }
+    //             node.owned = null;
+    //         }
+
+    //         if (node.cleanups !== null) {
+    //             if (_owner.cleanups === null) _owner.cleanups = node.cleanups;
+    //             else for (i = 0; i < node.cleanups.length; i++) {
+    //                 _owner.cleanups.push(node.cleanups[i]);
+    //             }
+    //             node.cleanups = null;
+    //         }
+    //     }
+    // } else {      
+    //     node.fn = fn;
+    //     node.value = value;
+    //     node.age = RootClock.time;
+
+    //     if (_owner !== null) {
+    //         if (_owner.owned === null) _owner.owned = [node];
+    //         else _owner.owned.push(node);
+    //     }
+    // }
+
+    // return recycle;
+}
+
+</script></body></html>

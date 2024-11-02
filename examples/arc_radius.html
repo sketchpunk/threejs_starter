@@ -1,0 +1,205 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }  from '../lib/Starter.js';
+import ShapePointsMesh     from "../lib/meshes/ShapePointsMesh.js";
+import DynLinesMesh        from "../lib/meshes/DynLineMesh.js";
+import { vec3, quat }      from 'gl-matrix';
+
+let App;
+let Debug = {};
+
+window.addEventListener( "load", _=>{
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App = new Starter( { webgl2:false, grid:true } );
+    App.setCamera( 0, 20, 4 ).render();
+
+    App.add( (Debug.pnt = new ShapePointsMesh() ) );
+    App.add( (Debug.ln  = new DynLinesMesh() ) );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Debug.pnt
+    //     .add( [-1,0,0], 0x00ffff, 4, 1 )
+    //     .add( [1,0,0],  0x00ffff, 6, 2 )
+    //     .add( [0,1,0],  0xffff00, 6, 5 );
+
+    // Debug.ln
+    //     .add( [-1,0,0], [-1,1,0], 0x00ffff, 0xffff00, false )
+    //     .add( [1,0,0],  [1,1,0],  0x00ffff, 0xffff00, false )
+    //     .add( [-1,1,0], [1,1,0],  0xffff00, null, true );
+
+    const p0 = [-1,0.3,0];
+    const p1 = [1,0.3,0];
+    const mid = vec3.lerp( [], p0, p1, 0.5 );
+
+    Debug.pnt.add( p0, 0x00ffff, 3 );
+    Debug.pnt.add( p1, 0x00ffff, 3 );
+    Debug.pnt.add( mid, 0xffff00, 3, 2 );
+    Debug.ln.add( p0, p1, 0x00ffff );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const chordLen  = vec3.distance( p0, p1 );
+    const arcLen    = chordLen * 1.015; 
+
+    // arcLength    = radius * theta
+    // radius       = arcLength / theta
+    // chordLength  = 2 * r * sin( theta / 2 )
+    // theta        = 2 * sinc^-1( chordLength / arcLength )
+    // hypotenuse^2 = opposite^2 + adjacent^2
+    // opposite     = sqrt( hypotenuse^2 - adjacent^2 )
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Brute force inverse of sinc
+    const ans = chordLen / arcLen;
+    const inc = 0.05;
+    let theta
+    for( let i=1; i < 100; i++ ){
+        theta = i * inc;
+        const s = sinc( theta ); //console.log( i, 'theta', theta, 'sinc', s, 'ans', ans );
+        if( Math.abs( s - ans ) < 1e-2 ) break;
+    }
+
+    // console.log( 'answer', newtons( sinc, sinc_dxdy, 0.4, ans, 1e-2, 0.01 ), theta );
+    console.log( 'answer', newtons3( sinc, sinc_dxdy, 3.14, ans, 1e-2, 0.01 ), theta );
+    // theta = newtons( sinc, sinc_dxdy, 3.2, ans, 1e-6, 0.001 );
+    theta *= 2;
+
+    
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const radius = arcLen / theta;
+    //opposite = sqrt( hypotenuse^2 - adjacent^2 )
+    const biSecLen = Math.sqrt( radius**2 - (chordLen*0.5)**2 );
+    const center   = [ mid[0], mid[1]-biSecLen, mid[2] ];
+    const arcMid   = [ mid[0], center[1]+radius, mid[2] ];
+
+    const dir = vec3.sub( [], p1, center ); 
+    vec3.normalize( dir, dir );
+    
+    let   pv  = p1;
+    const v   = [0,0,0];
+    const q   = [0,0,0,1];
+    const seg = 10;
+    let aLen = 0;
+    for( let i=1; i <=seg; i++ ){
+        quat.setAxisAngle( q, [0,0,1], theta * ( i / seg ) );   // Lerp Angle
+        vec3.transformQuat( v, dir, q );                        // Rotate Dir
+        vec3.scaleAndAdd( v, center, v, radius );               // Compute Point
+        Debug.pnt.add( v, 0xff00ff, 2, 2 );                     // Vis Debug
+
+        aLen += vec3.distance( pv, v );  // Make sure arc len is close to original
+        pv   = v.slice();
+    }
+
+    Debug.pnt.add( center, 0xffff00, 5, 6 );
+    Debug.pnt.add( arcMid, 0xffff00, 3, 2 );
+    console.log( aLen, arcLen );
+});
+
+// y = sinc( x ), x = sincInv( y );
+function sinc( x ){ return Math.sin( x ) / x; }
+function sinc_dxdy( x ){ return ( Math.cos(x) - Math.sin(x) ) / x**2; }
+// function sinc_dxdy( x ){ return ( x * Math.cos(x) - Math.sin(x) ) / x**2; }
+// function sinc_dxdy( x ){ return Math.cos(x) / x - Math.sin(x) / x**2; }
+
+
+
+function newtonsx( f, fd=null, x, ans=0, epsilon=1e-3, inc=0.01, maxIter=100 ){
+    // without derivitive, use th following:
+    // x = x - f(x) / ( (f(x+i) - f(x-1)) / (2*i) )
+    // else
+    // x = x - f(x) / fd(x);
+
+    const inc_2_inv	= 1 / (2 * inc); // Just to remove Division and the extra mul
+    let   px        = x;             // Previous X
+
+    for( let i=0; i < maxIter; i++ ){
+        x = ( !fd )?
+            x - f(x) / (( f(x + inc) - f(x - inc) ) * inc_2_inv ) :
+            x - f(x) / fd(x);
+        console.log( 'iter', i, 'prevX', px, 'currX', x,  'answer', ans, 'f(x)', f(x) );
+        if( ans - Math.abs( px - x ) <= epsilon ) break;
+        px = x;
+    }
+
+    return x;
+}
+
+
+function newtons( f, fd=null, x0, ans=0, epsilon=1e-3, inc=0.01, maxIter=100 ){
+    // without derivitive, use th following:
+    // x = x - f(x) / ( (f(x+i) - f(x-i)) / (2*i) )
+    // else
+    // x = x - f(x) / fd(x);
+
+    const inc_2_inv	= 1 / ( 2 * inc ); // Just to remove Division and the extra mul
+
+    let y, yd, x1;
+    for( let i=0; i < maxIter; i++ ){
+        // y   = f( x0 ) - ans;
+        // yd  = ( fd )? fd( x0 ) : ( 
+        //     ( f( x0 + inc ) - ans ) - 
+        //     ( f( x0 - inc ) - ans ) 
+        // ) * inc_2_inv;
+
+        y   = f( x0 );
+        yd  = fd( x0 );
+        // yd  = ( fd )? fd( x0 ) : ( 
+        //     ( f( x0 + inc ) ) - 
+        //     ( f( x0 - inc ) ) 
+        // ) * inc_2_inv;
+
+        // if( Math.abs( yd ) < 1e-6 ){
+        //     console.log( 'dxdy 2 small' );
+        //     break;  // Stop if the denominator is too small
+        // }
+        
+        x1 = x0 - ( y / yd );       // Newton's computation
+    
+        console.log( '--', ans, y, Math.abs( x1 - x0 ) );
+        // if( Math.abs( x1 - x0 ) <= epsilon ) return x1;
+        if( Math.abs( y - ans ) <= epsilon ) return x0;
+
+    
+
+        x0 = x1;
+    }
+
+    return null;
+}
+
+
+function newtons3(f, fd=null, x0, ans=0, epsilon=1e-3, inc=0.01, maxIter=100) {
+ 
+    for (var i = 0; i < maxIter; ++i) {
+        var currentSlope = fd( x0 );
+        if (currentSlope === 0.0) {
+            return x0;
+        }
+   
+        var currentX = f( x0 ) ;
+
+        if( Math.abs( ( currentX - ans ) ) <= epsilon ) return x0;
+
+        x0 -= ( currentX - ans ) / currentSlope;
+
+        console.log( ans, currentX, x0 );
+    }
+    
+    return x0;
+}
+
+function newtonRaphsonIterate (aX, aGuessT, mX1, mX2) {
+ for (var i = 0; i < NEWTON_ITERATIONS; ++i) {
+   var currentSlope = getSlope(aGuessT, mX1, mX2);
+   if (currentSlope === 0.0) {
+     return aGuessT;
+   }
+   var currentX = calcBezier(aGuessT, mX1, mX2) - aX;
+   aGuessT -= currentX / currentSlope;
+ }
+ return aGuessT;
+}
+
+// TODO, Try BinarySearch between the range of 0 and Pi
+
+
+</script></body></html>

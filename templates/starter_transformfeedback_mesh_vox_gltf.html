@@ -2,6 +2,7 @@
 <style>canvas{ display:block; } body, html { padding:0px; margin:0px; width:100%; height:100%; }</style>
 <body><script src="/import-map.js"></script><script type="module">
 import useThreeWebGL2, { THREE, useDarkScene, useVisualDebug } from '../lib/useThreeWebGL2.js';
+import { GLTFLoader } from 'threejsm/loaders/GLTFLoader.js';
 
 // #region MAIN
 let Debug;
@@ -11,39 +12,44 @@ let Ref   = {};
 window.addEventListener( 'load', async _=>{
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // Setup
-    App.sphericalLook( 0, 20, 5 );
+    App.sphericalLook( 0, 20, 3, [0, 0.8, 0] );
     Debug = await useVisualDebug( App );
 
     // testVoxel();
     // testVoxelRender();
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    const geo   = new THREE.SphereGeometry( 1, 5, 5 );
+    // Load Mesh
+    const gltf = await gltfLoaderAsync( '../assets/nabba/nabba.gltf' );
+    const geo  = gltf.scene.children[0].children[1].geometry;
+
     geo.computeBoundingBox();
 
-    const gScl  = 1.1;
     const gMin  = geo.boundingBox.min.toArray();
     const gMax  = geo.boundingBox.max.toArray();
-    const gSize = [
-        ( gMax[0] - gMin[0] ) * gScl,
-        ( gMax[1] - gMin[1] ) * gScl,
-        ( gMax[2] - gMin[2] ) * gScl,
-    ];
+    // Debug.ln.box( gMin, gMax, 0x00ff00 );
 
+    delete geo.attributes.skinIndex;
+    delete geo.attributes.skinWeight;
+
+    console.log( 'Triangle Count', geo.index.array.length / 3 );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // const geo   = new THREE.SphereGeometry( 1, 5, 5 );
+    // geo.computeBoundingBox();
     const mat1   = new THREE.MeshPhongMaterial( { color: 0x00ffff } ); 
     const mesh1  = new THREE.Mesh( geo, mat1 ); 
     mesh1.position.x=-2;
     App.scene.add( mesh1 );
 
+    console.time( 'DataTextureGen' );
     Ref.tex = geoToDataTexture( App.renderer.getContext(), geo );
-    // console.log( Ref.tex );
-    // console.log( geo );
-
+    console.timeEnd( 'DataTextureGen' );
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    Ref.vox = new VoxelChunk().fitSize( gSize, 20, true );
-
-    console.log( Ref.vox.count );
+    // Ref.vox = new VoxelChunk().fitSize( gSize, 20, false );
+    Ref.vox = new VoxelChunk().fitBound( gMin, gMax, 25, 1.01 );
+    console.log( 'Voxel Count', Ref.vox.count );
 
     // Visualize Voxel Grid
     Debug.ln.box( Ref.vox.minBound, Ref.vox.maxBound, 0x00ffff );
@@ -65,7 +71,6 @@ window.addEventListener( 'load', async _=>{
         .setUniform( 'triCnt', Ref.tex.rowLen )
         .setUniform( 'texTri', Ref.tex.ref );
 
-
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     const box  = new THREE.BoxGeometry( 1, 1, 1 ); 
     const iGeo = new THREE.InstancedBufferGeometry();
@@ -82,9 +87,9 @@ window.addEventListener( 'load', async _=>{
     App.render(); // Render scene once so GL buffers exist in Attributes
     
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    console.time( 'compute' );
+    console.time( 'Compute' );
     TransformFeedback.compute( App.renderer, Ref.sh, { vox: iGeo.attributes.inst } );
-    console.timeEnd( 'compute' );
+    console.timeEnd( 'Compute' );
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     App.renderLoop();
@@ -264,6 +269,13 @@ function geoToDataTexture( gl, geo ){
 
     dt.upload();
     return dt;
+}
+
+function gltfLoaderAsync( url ){
+    return new Promise( ( resolve, reject )=>{
+        const loader = new GLTFLoader();
+        loader.load( url, resolve, null, reject );
+    });
 }
 // #endregion
 
@@ -475,6 +487,7 @@ class VoxelChunk{
 
     // #region SETTERS
     // Try to subdivide dimension
+
     fitSize( size=[2,1,1], div=2, centered=true ){
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         // Found how many voxels can be fit in the size
@@ -509,6 +522,44 @@ class VoxelChunk{
         // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         // Buffer
         this.cells = new Uint32Array( this.count );
+        return this;
+    }
+
+    fitBound( min, max, div=2, scl=1 ){
+        const size = [ ( max[0]-min[0] )*scl, ( max[1]-min[1] )*scl, ( max[2]-min[2] )*scl ];
+
+        this.cellSize     = Math.min( size[0] / div, size[1] / div, size[2] / div );
+        this.dimension[0] = Math.ceil( size[0] / this.cellSize );
+        this.dimension[1] = Math.ceil( size[1] / this.cellSize );
+        this.dimension[2] = Math.ceil( size[2] / this.cellSize );
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Counts
+        this.xzCount = this.dimension[0] * this.dimension[2];
+        this.count   = this.dimension[1] * this.xzCount;
+
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        size[0] = this.dimension[0] * this.cellSize;
+        size[1] = this.dimension[1] * this.cellSize;
+        size[2] = this.dimension[2] * this.cellSize;
+
+        const offset = [
+            ( min[0]*0.5 + max[0]*0.5 ) - size[0] * 0.5,
+            ( min[1]*0.5 + max[1]*0.5 ) - size[1] * 0.5,
+            ( min[2]*0.5 + max[2]*0.5 ) - size[2] * 0.5,
+        ];
+
+        this.minBound[0] = offset[0];
+        this.minBound[1] = offset[1];
+        this.minBound[2] = offset[2];
+        this.maxBound[0] = size[0] + offset[0];
+        this.maxBound[1] = size[1] + offset[1];
+        this.maxBound[2] = size[2] + offset[2];
+        
+        // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        // Buffer
+        this.cells = new Uint32Array( this.count );
+
         return this;
     }
     // #endregion

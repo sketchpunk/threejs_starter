@@ -1,0 +1,757 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title></title></head>
+<style>canvas{ display:block; } body, html { padding:0px; margin:0px; width:100%; height:100%; }</style>
+<body><script src="/import-map.js"></script><script type="module">
+
+// #region IMPORTS
+import useThreeWebGL2, { THREE, useDarkScene, useVisualDebug } from '../lib/useThreeWebGL2.js';
+import DynLineMesh      from '../lib/meshes/DynLineMesh.js';
+import { vec3, quat }   from 'gl-matrix';
+
+import earcut           from '../lib/thirdparty/earcut.js';
+import createGeometry   from '../lib/meshes/createGeometry.js';
+// #endregion
+
+// #region MAIN
+let Debug;
+let App   = useDarkScene( useThreeWebGL2( ) );
+let Ref   = {
+    points : [],
+};
+
+
+window.addEventListener( 'load', async _=>{
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Setup
+    App.sphericalLook( 0, 20, 10 );
+    Debug       = await useVisualDebug( App );
+    Ref.caster  = new RayCaster( App.camera, App.renderer ).setPointLimit( 0.1 );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const dense = 1000;
+    const mat   = new THREE.PointsMaterial( { size:0.001, vertexColors: true  } );
+
+    const geo0  = geoBuffer( randomPointGeometry( dense, [0,0,0], [1,1,1] ) );
+    const mesh0 = new THREE.Points( geo0, mat );
+    App.scene.add( mesh0 );
+
+    const geo2  = geoBuffer( randomPointGeometry( dense, [-1,0,1], [0,1,0] ));
+    const mesh2 = new THREE.Points( geo2, mat );
+    App.scene.add( mesh2 );
+
+    const geo1  = geoBuffer( randomPointGeometry( dense, [-1,1,0], [0,2,1] ));
+    const mesh1 = new THREE.Points( geo1, mat );
+    App.scene.add( mesh1 );
+
+    const geo3  = geoBuffer( randomPointGeometry( dense, [0,1,0], [1,2,1] ));
+    const mesh3 = new THREE.Points( geo3, mat );
+    App.scene.add( mesh3 );
+
+    Ref.meshes = [ mesh0, mesh1, mesh2, mesh3 ];
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const lines = new DynLineMesh();
+    lines.box( [0,0,0], [1,1,1], 0x606060 );
+    lines.box( [-1,0,1], [0,1,0], 0x606060 );
+    lines.box( [-1,1,0], [0,2,1], 0x606060 );
+    lines.box( [0,1,0], [1,2,1], 0x606060 );
+    App.scene.add( lines );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.renderLoop();
+    // App.createRenderLoop( onPreRender ).start();
+});
+
+App.renderer.domElement.addEventListener( 'mousedown', e=>{
+    if( !e.shiftKey ) return;
+
+    const max = 4;
+
+    Ref.caster.fromMouseEvent( e );
+    const [a,b] = Ref.caster.getLine();
+
+    if( Ref.points.length >= max ){
+        Ref.points.length = 0;
+        Debug.reset();
+    }
+
+    // Debug.reset();
+    // Debug.ln.add( a, b, 0x00ff00 );
+
+    const result = Ref.caster.inObjects( Ref.meshes );
+    if( result.length > 0 ){
+        // result.sort( (a,b)=>{
+        //     return ( a.distanceToRay === b.distanceToRay )? 0 :
+        //            ( a.distanceToRay < b.distanceToRay) ? -1 : 1;
+        // });
+        const p = result[0].point.toArray();
+        Ref.points.push( p );
+        Debug.pnt.add( p, 0x00ff00, 3, 1 );
+
+        if( Ref.points.length === max ){
+            console.log( Ref.points );
+
+            // const [ c, n ] = plane_from_points( Ref.points );
+            // console.log( 'plane', c, n );
+
+            const [ c, n ] = plane_from_points2( Ref.points );
+
+            // const [ c, n ] = getPlane( Ref.points );
+
+            // const [ c, n ] = leastSquaresMethod( Ref.points );
+
+            const cn = [ c[0]+n[0], c[1]+n[1], c[2]+n[2] ];
+            Debug.pnt.add( c, 0x00ffff, 6, 0 );
+            Debug.ln.add( c, cn, 0x00ffff );
+
+            plane_StapPoints( Ref.points, c, n );
+            const [ flat, rot ] = plane_To2D( Ref.points, c, n );
+
+            const m = poly2mesh( flat );
+            m.position.fromArray( c );
+            m.quaternion.fromArray( rot );
+
+            
+
+            // const pnts = sortPointsCCW( Ref.points );
+
+            // for( let i=0; i < pnts.length; i++ ){
+            //     const ii = ( i+1 ) % pnts.length;
+
+            //     console.log( i, ii, pnts[i], pnts[ii] );
+            //     Debug.ln.add( pnts[i], pnts[ii], 0xffff00 );
+            // }
+        }
+    }
+    console.log( result );
+});
+
+function plane_StapPoints( pnts, c, n ){
+    for( const p of pnts ){
+        snapPointToPlane( p, c, n )
+        Debug.pnt.add( p, 0x0000ff, 5, 1 );
+    }
+    return pnts;
+}
+
+function plane_To2D( pnts, c, n ){ 
+    // TODO, Test N against UP
+    const fwd = [0,1,0];
+    const lft = vec3.cross( [0,0,0], n, fwd );
+    vec3.cross( fwd, lft, n );
+    vec3.normalize( fwd, fwd );
+    vec3.normalize( lft, lft );
+
+    const rot = quat_fromAxes( lft, n, fwd );
+    quat.normalize( rot, rot );
+
+    const irot = quat.invert( [], rot );
+
+    console.log( irot );
+
+    Debug.ln.add( c, vec3.scaleAndAdd( [], c, lft, 1 ), 0xffff00 );
+    Debug.ln.add( c, vec3.scaleAndAdd( [], c, fwd, 1 ), 0xff0000 ); // Forward
+    
+    const colors = [ 0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0x00ffff, 0xff00ff, 0xffffff ];
+    let i = 0;
+    const rtn = [];
+
+    // pnts.reverse();
+
+    for( const p of pnts ){
+        const pp = vec3.sub( [], p, c );
+        vec3.transformQuat( pp, pp, irot );
+        pp[1] = 0; // Should be VERY near zero, snap it to zero
+        rtn.push( pp );
+        Debug.pnt.add( pp, 0xff00ff, 3, 0 );
+        
+
+        if( i > 0 ){
+            Debug.ln.add( rtn[i-1], rtn[i], colors[i-1] );
+        }
+
+        i++;
+    }
+
+    const nn = normNewellMethod( rtn );
+    nn[0] *= 5;
+    nn[1] *= 5;
+    nn[2] *= 5;
+    console.log( nn );
+    Debug.ln.add( [0,0,0], nn, 0xffff00 );
+
+    return [ rtn, rot ];
+}
+
+function poly2mesh( pnts ){
+    console.log( 'isCW', isClockwise( pnts, true ) );
+    
+
+    const flat2D = [];
+    const flat3D = [];
+    for( const p of pnts ){
+        flat2D.push( p[0], p[2] );
+        flat3D.push( p[0], p[1], p[2] );
+    }
+
+    const indices = earcut( flat2D, null, 2 );
+
+    // -------------------------------------
+    // Reverse the triangle windings if not pointing up
+    const nn = triNorm( pnts[ indices[0] ], pnts[ indices[1] ], pnts[ indices[2] ] );
+    if( vec3.dot( nn, [0,1,0] ) < 0 ){
+        console.log( 'MEH' );
+
+        let t;
+        for( let i=0; i < indices.length; i+=3 ){
+            t              = indices[ i ];
+            indices[ i ]   = indices[ i+2 ];
+            indices[ i+2 ] = t;
+        }
+    }
+
+    // nn[0] *= 5;
+    // nn[1] *= 5;
+    // nn[2] *= 5;
+    // console.log( nn );
+    // Debug.ln.add( [0,0,0], nn, 0xffff00 );
+
+    // -------------------------------------
+    const geo  = geoBuffer( { vertices:new Float32Array(flat3D), indices: new Uint16Array( indices ) } );
+    const mesh = new THREE.Mesh( geo, new THREE.MeshBasicMaterial( {color:0x00ff00} ) );
+    App.scene.add( mesh );
+
+    return mesh;
+}
+
+
+// #region BUILD GEOMETRY
+function geoBuffer( props ){
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute( 'position', new THREE.BufferAttribute( props.vertices, 3 ) );
+
+    if( props.indices ) geo.setIndex( new THREE.BufferAttribute( props.indices, 1 ) );
+    if( props.normal )  geo.setAttribute( 'normal', new THREE.BufferAttribute( props.normal, 3 ) );
+    if( props.uv )      geo.setAttribute( 'uv', new THREE.BufferAttribute( props.uv, 2 ) );
+    if( props.color )   geo.setAttribute( 'color', new THREE.BufferAttribute( props.color, 3 ) );
+
+    return geo;
+}
+
+function randomPointGeometry( cnt, min, max ){
+    const vert  = new Float32Array( cnt * 3 );
+    const color = new Float32Array( cnt * 3 );
+    const c     = 0.6;
+    let   ii    = 0;
+    let   t;
+    
+    for( let i=0; i < cnt; i++ ){
+        t               = Math.random();
+        color[ ii ]     = c;
+        vert [ ii++ ]   = min[0] * (1-t) + max[0] * t;
+        
+        t               = Math.random();
+        color[ ii ]     = c;
+        vert [ ii++ ]   = min[1] * (1-t) + max[1] * t;
+        
+        t               = Math.random();
+        color[ ii ]     = c;
+        vert [ ii++ ]   = min[2] * (1-t) + max[2] * t;
+    }
+
+    return { vertices:vert, color };
+}
+// #endregion
+
+class RayCaster{
+    caster   = new THREE.Raycaster();
+    coord    = new THREE.Vector2();
+    viewSize = new THREE.Vector2();
+    camera   = null;
+    renderer = null;
+
+    constructor( camera, renderer ){
+        this.camera   = camera;
+        this.renderer = renderer;
+
+        console.log( this.caster );
+    }
+
+    setPointLimit( v ){
+        this.caster.params.Points.threshold = v;
+        return this;
+    }
+
+    fromMouseEvent( e ){
+        // Compute NDC screen coordinate of mouse over canvas
+        this.renderer.getSize( this.viewSize );
+        this.coord.x =  ( e.clientX / this.viewSize.x ) * 2 - 1;
+        this.coord.y = -( e.clientY / this.viewSize.y ) * 2 + 1;
+        this.caster.setFromCamera( this.coord, this.camera );
+        return this;
+    }
+
+    getLine(){
+        const scl = this.camera.far - this.camera.near;
+        const a   = this.caster.ray.origin.toArray();
+        const b   = this.caster.ray.direction.toArray();
+        b[0]     *= scl;
+        b[1]     *= scl;
+        b[2]     *= scl;
+        return [a,b];
+    }
+
+    inObjects( ary, checkChildren=false ){
+        return this.caster.intersectObjects( ary, checkChildren );
+    }
+}
+
+
+// #region HELPERS
+/** Snap a point onto a plane */
+function snapPointToPlane( pnt, planePos, planeNorm, out = null ){
+  // Dot Product between pnt vector & normal
+  const dot =
+    (pnt[0] - planePos[0]) * planeNorm[0] +
+    (pnt[1] - planePos[1]) * planeNorm[1] +
+    (pnt[2] - planePos[2]) * planeNorm[2];
+
+  // Snap point to plane
+  const rtn = out || pnt;
+  rtn[0] = pnt[0] - dot * planeNorm[0];
+  rtn[1] = pnt[1] - dot * planeNorm[1];
+  rtn[2] = pnt[2] - dot * planeNorm[2];
+  return rtn;
+}
+
+// function orientation( p1, p2, p3 ){
+//     // compute the two slopes of the 3 point line then subtract them
+//     const d = ( p3[1] - p2[1] ) * ( p2[0] - p1[0] ) - ( p2[1] - p1[1] ) * ( p3[0] - p2[0] );
+//     return ( d > 0 )?  1 : 
+//            ( d < 0 )? -1 : 0
+// }
+
+function isPolyClockwise( pnts, useZ=false ){
+    const end = pnts.length-1;
+    const iy  = useZ? 2 : 1;
+    let sum   = 0;
+    let i, ii;
+
+    for (let i = 0; i < end; i++ ){
+        ii = i + 1;
+        // sum += ( pnts[ii][0] - pnts[i][0] ) * ( pnts[ii][1] + pnts[i][1] );
+        // https://www.baeldung.com/cs/list-polygon-points-clockwise#2-area-of-polygon
+        sum += pnts[i][0] * pnts[ii][iy] - pnts[i][iy] * pnts[ii][0];
+        // sum += pnts[i+0] * pnts[ii+1] - pnts[i+1] * pnts[ii+0]; // For Flat Array
+    }
+
+    // return ( sum < 0 );
+    return ( sum >= 0 );
+}
+
+function isClockwise(polygon, useZ=false ) {
+    let sum = 0;
+    const iy = useZ? 2 : 1;
+    const numPoints = polygon.length;
+
+    for (let i = 0; i < numPoints; i++) {
+        const current = polygon[i];
+        const next = polygon[(i + 1) % numPoints];
+        sum += (next[0] - current[0]) * (next[iy] + current[iy]);
+    }
+
+    // return sum > 0; // Clockwise if sum is positive
+    return sum < 0; // Because of WebGL XZ plane, seems like its reversed
+}
+
+function quat_fromAxes( xAxis, yAxis, zAxis, out=[0,0,0,1] ){
+    const m00 = xAxis[0], m01 = xAxis[1], m02 = xAxis[2],
+          m10 = yAxis[0], m11 = yAxis[1], m12 = yAxis[2],
+          m20 = zAxis[0], m21 = zAxis[1], m22 = zAxis[2],
+          t   = m00 + m11 + m22;
+
+    let x, y, z, w, s;
+
+    if(t > 0.0){
+        s = Math.sqrt(t + 1.0);
+        w = s * 0.5 ; // |w| >= 0.5
+        s = 0.5 / s;
+        x = (m12 - m21) * s;
+        y = (m20 - m02) * s;
+        z = (m01 - m10) * s;
+    }else if((m00 >= m11) && (m00 >= m22)){
+        s = Math.sqrt(1.0 + m00 - m11 - m22);
+        x = 0.5 * s;// |x| >= 0.5
+        s = 0.5 / s;
+        y = (m01 + m10) * s;
+        z = (m02 + m20) * s;
+        w = (m12 - m21) * s;
+    }else if(m11 > m22){
+        s = Math.sqrt(1.0 + m11 - m00 - m22);
+        y = 0.5 * s; // |y| >= 0.5
+        s = 0.5 / s;
+        x = (m10 + m01) * s;
+        z = (m21 + m12) * s;
+        w = (m20 - m02) * s;
+    }else{
+        s = Math.sqrt(1.0 + m22 - m00 - m11);
+        z = 0.5 * s; // |z| >= 0.5
+        s = 0.5 / s;
+        x = (m20 + m02) * s;
+        y = (m21 + m12) * s;
+        w = (m01 - m10) * s;
+    }
+
+    out[ 0 ] = x;
+    out[ 1 ] = y;
+    out[ 2 ] = z;
+    out[ 3 ] = w;
+    return out;
+}
+// #endregion
+
+function dot( a, b ){ return a.reduce( (acc, v, i ) => acc + v * b[i], 0 ); }
+function dot1( a ){ return a[0]**2 + a[1]**2 + a[2]**2; }
+
+function sortPointsCCW( ary ){
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Find the polygon center
+    const c = ary.reduce( (acc, p)=>{ acc[0] += p[0]; acc[1] += p[1]; acc[2] += p[2]; return acc; }, [0, 0, 0] );
+    c[0] /= ary.length;
+    c[1] /= ary.length;
+    c[2] /= ary.length;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Calculate the angles of each point from the center
+    const angles = [];
+    for (let i = 0; i < ary.length; i++) {
+        const p     = ary[ i ];
+        const np    = ary[ (i + 1) % ary.length ];
+        // const angle = Math.acos( dot(c, p) / ( Math.sqrt( dot(p, p) ) * Math.sqrt( dot(c, c) ) ) );
+
+        // const angle = Math.atan2(p[1] - center[1], point[0] - center[0]) * 180 / Math.PI;
+        // if (angle < 0) {
+        //     angle += 360;
+        // }
+
+        const vector1 = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
+        // const vector2 = [np[0] - c[0], np[1] - c[1], np[2] - c[2]];
+        const vector2 = [0,1,0];
+        const dotProduct = vector1[0] * vector2[0] + vector1[1] * vector2[1] + vector1[2] * vector2[2];
+        const magnitude1 = Math.sqrt(vector1[0] ** 2 + vector1[1] ** 2 + vector1[2] ** 2);
+        const magnitude2 = Math.sqrt(vector2[0] ** 2 + vector2[1] ** 2 + vector2[2] ** 2);
+        const cosine = dotProduct / (magnitude1 * magnitude2);
+        const angle = Math.acos(cosine) * 180 / Math.PI;
+
+        angles.push( angle );
+    }
+
+    console.log( angles );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Sort the points based on their angles
+    const sorted = [];
+    for (let i = 0; i < ary.length; i++) {
+        const min = Math.min( ...angles );
+        const idx = angles.indexOf( min );
+
+        sorted.push( ary[ idx ] );
+        // angles.splice( idx, 1 );
+        angles[ idx ] = Infinity;
+
+        // sortedPoints.push(points[angles.indexOf(Math.min(...angles))]);
+        // angles.splice(angles.indexOf(Math.min(...angles)), 1);
+    }
+
+    return sorted;
+}
+
+
+// Constructs a plane from a collection of points
+// so that the summed squared distance to all points is minimzized
+// https://www.ilikebigbits.com/2015_03_04_plane_from_points.html
+function plane_from_points( ary ){
+    if( ary.length < 3 ){ return null; } // At least three points required
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    let cent = [0,0,0];
+    for( const p of ary ){
+        cent[0] += p[0];
+        cent[1] += p[1];
+        cent[2] += p[2];
+
+        // console.log( 'y', cent, p );
+    }
+
+    cent[0] /= ary.length;
+    cent[1] /= ary.length;
+    cent[2] /= ary.length;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Calc full 3x3 covariance matrix, excluding symmetries:
+    let xx = 0.0; let xy = 0.0; let xz = 0.0;
+    let yy = 0.0; let yz = 0.0; let zz = 0.0;
+
+    for( const p of ary ){
+        const rx = p[0] - cent[0];
+        const ry = p[1] - cent[1];
+        const rz = p[2] - cent[2];
+        xx += rx * rx;
+        xy += rx * ry;
+        xz += rx * rz;
+        yy += ry * ry;
+        yz += ry * rz;
+        zz += rz * rz;
+
+        // console.log( p, cent );
+        // console.log( 'x', rx, ry, rz );
+    }
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    let det_x   = yy*zz - yz*yz;
+    let det_y   = xx*zz - xz*xz;
+    let det_z   = xx*yy - xy*xy;
+    let det_max = Math.max( det_x, det_y, det_z );
+    
+    if( det_max <= 0.0 ) return null;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Pick path with best conditioning:
+
+    // console.log( det_max, det_x, det_y, det_z );
+
+    let dir;
+    switch( det_max ){
+        case det_x: dir = [
+            det_x,
+            xz*yz - xy*zz,
+            xy*yz - xz*yy,
+        ]; break;
+
+        case det_y: dir = [
+            xz*yz - xy*zz,
+            det_y,
+            xy*xz - yz*xx,
+        ]; break;
+
+        case det_z: dir = [
+            xy*yz - xz*yy,
+            xy*xz - yz*xx,
+            det_z,
+        ]; break;
+    }
+
+    // Normalize
+    const mag = Math.sqrt( dir[0]**2 + dir[1]**2 + dir[2]**2 );
+    dir[0] /= mag;
+    dir[1] /= mag;
+    dir[2] /= mag;
+
+    return [ cent, dir ];
+}
+
+// So the new method is:
+// Calculate the centroid of the points
+// Calculate the covariance matrix of the points relative to the centroid
+// Do linear regression along the X, Y and Z axis
+// Weight he result of the linear regressions based on the square of the determinant
+
+// Fit a plane to a collection of points.
+// Fast, and accurate to within a few degrees.
+// Returns None if the points do not span a plane.
+// https://x.com/festivevector/status/1803832776887562628
+// https://www.ilikebigbits.com/2017_09_25_plane_from_points_2.html
+function plane_from_points2( ary ){
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    let n = ary.length;
+    if( n < 3 ){ return null; } // At least three points required
+
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // let mut sum = Vec3{x:0.0, y:0.0, z:0.0};
+    // for p in points {
+    //     sum = &sum + &p;
+    // }
+    // let centroid = &sum * (1.0 / (n as f64));
+
+    let cent = [0,0,0];
+    for( const p of ary ){
+        cent[0] += p[0];
+        cent[1] += p[1];
+        cent[2] += p[2];
+    }
+
+    cent[0] /= n;
+    cent[1] /= n;
+    cent[2] /= n;
+
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Calculate full 3x3 covariance matrix, excluding symmetries:
+    let xx = 0.0; let xy = 0.0; let xz = 0.0;
+    let yy = 0.0; let yz = 0.0; let zz = 0.0;
+    
+    for( const p of ary ){
+        const rx = p[0] - cent[0];
+        const ry = p[1] - cent[1];
+        const rz = p[2] - cent[2];
+        xx += rx * rx;
+        xy += rx * ry;
+        xz += rx * rz;
+        yy += ry * ry;
+        yz += ry * rz;
+        zz += rz * rz;
+    }
+
+    xx /= n;
+    xy /= n;
+    xz /= n;
+    yy /= n;
+    yz /= n;
+    zz /= n;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // let mut weighted_dir = Vec3{x: 0.0, y: 0.0, z: 0.0};
+    let weighted_dir    = [0,0,0];
+    let axis            = [0,0,0];
+    let wgt             = 0;
+    
+    // -------------------------
+    const det_x = yy * zz - yz * yz;
+    wgt         = det_x * det_x;
+    axis[0]     = det_x;
+    axis[1]     = xz * yz - xy * zz;
+    axis[2]     = xy * yz - xz * yy;
+    
+    if( dot( weighted_dir, axis ) < 0.0 ) wgt = -wgt;
+    weighted_dir[0] += axis[0] * wgt;
+    weighted_dir[1] += axis[1] * wgt;
+    weighted_dir[2] += axis[2] * wgt;
+        
+    // -------------------------
+    const det_y = xx*zz - xz*xz;
+    wgt         = det_y * det_y;
+    axis[0]     = xz*yz - xy*zz;
+    axis[1]     = det_y;
+    axis[2]     = xy*xz - yz*xx;
+
+    if( dot( weighted_dir, axis ) < 0.0 ) wgt = -wgt;
+    weighted_dir[0] += axis[0] * wgt;
+    weighted_dir[1] += axis[1] * wgt;
+    weighted_dir[2] += axis[2] * wgt;
+
+    // -------------------------
+    const det_z = xx*yy - xy*xy;
+    wgt         = det_z * det_z;
+    axis[0]     = xy*yz - xz*yy;
+    axis[1]     = xy*xz - yz*xx;
+    axis[2]     = det_z;
+
+    if( dot( weighted_dir, axis ) < 0.0 ) wgt = -wgt;
+    weighted_dir[0] += axis[0] * wgt;
+    weighted_dir[1] += axis[1] * wgt;
+    weighted_dir[2] += axis[2] * wgt;
+
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Normalize
+    const mag = Math.sqrt( weighted_dir[0]**2 + weighted_dir[1]**2 + weighted_dir[2]**2 );
+    weighted_dir[0] /= mag;
+    weighted_dir[1] /= mag;
+    weighted_dir[2] /= mag;
+
+    // if( is_finite )
+    console.log( 'Result', cent, weighted_dir );
+
+    return [cent, weighted_dir];
+    // let normal = normalize(&weighted_dir);
+    // if normal.is_finite() {
+    //     Some(plane_from_point_and_normal(centroid, normal))
+    // } else {
+    //     None
+    // }
+}
+
+
+function normNewellMethod( ary ){
+    // normal with Newell's method
+    const len   = ary.length;
+    const n     = [0,0,0];
+    
+    let i, ii, a, b;
+    for( i=0; i < len; i++ ){
+        ii = ( i+1 ) % len;
+        a  = ary[ i ];
+        b  = ary[ ii ];
+        
+        n[0] += ( a[1] - b[1] ) * ( a[2] + b[2] );
+        n[1] += ( a[2] - b[2] ) * ( a[0] + b[0] );
+        n[2] += ( a[0] - b[0] ) * ( a[1] + b[1] );
+    }
+
+    const mag = Math.sqrt( n[0]**2 + n[1]**2 + n[2]**2 );
+    n[0] /= mag;
+    n[1] /= mag;
+    n[2] /= mag;
+
+    return n;
+}
+
+
+function getPlane( ary ){
+    // normal with Newell's method
+    const len   = ary.length;
+    const n     = [0,0,0];           // Normal
+    const c     = [0,0,0];           // Centroid
+    
+    let i, ii, a, b;
+    for( i=0; i < len; i++ ){
+        ii = ( i+1 ) % len;
+        a  = ary[ i ];
+        b  = ary[ ii ];
+        
+        // Normal
+        n[0] += ( a[1] - b[1] ) * ( a[2] + b[2] );
+        n[1] += ( a[2] - b[2] ) * ( a[0] + b[0] );
+        n[2] += ( a[0] - b[0] ) * ( a[1] + b[1] );
+        
+        // Centroid
+        c[0] += a[0];
+        c[1] += a[1];
+        c[2] += a[2];
+    }
+    
+    // return [ c.divScale( len ), n.norm() ];
+
+    // Average out centroid
+    c[0] /= len;
+    c[1] /= len;
+    c[2] /= len;
+
+    const mag = Math.sqrt( n[0]**2 + n[1]**2 + n[2]**2 );
+    n[0] /= mag;
+    n[1] /= mag;
+    n[2] /= mag;
+
+    return [ c, n ];
+}
+
+function triNorm( a, b, c ){
+    // AB = B - A, AC = C - A
+    const ax = b[0] - a[0], ay = b[1] - a[1], az = b[2] - a[2],
+          bx = c[0] - a[0], by = c[1] - a[1], bz = c[2] - a[2];
+
+    // Cross Product
+    let x = ay * bz - az * by;
+    let y = az * bx - ax * bz;
+    let z = ax * by - ay * bx;
+
+    // Normalizing
+    const mag = Math.sqrt( x**2 + y**2 + z**2 );
+    x /= mag;
+    y /= mag;
+    z /= mag;
+
+    return [ x, y, z ];
+}
+
+</script></body></html>

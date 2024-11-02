@@ -1,0 +1,741 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title></title></head>
+<style>canvas{ display:block; } body, html { padding:0px; margin:0px; width:100%; height:100%; }</style>
+<body><script src="/import-map.js"></script><script type="module">
+
+// #region IMPORTS
+import useThreeWebGL2, { THREE, useDarkScene, useVisualDebug } from '../lib/useThreeWebGL2.js';
+import DynLineMesh      from '../lib/meshes/DynLineMesh.js';
+import { vec3, quat }   from 'gl-matrix';
+
+import earcut           from '../lib/thirdparty/earcut.js';
+// #endregion
+
+// #region MAIN
+let Debug;
+let App   = useDarkScene( useThreeWebGL2( ) );
+let Ref   = {
+    points : [],
+    offset : [4,0,0],
+    offset2 : [-4,0,0],
+    colors : [ 0xff0000, 0x00ff00, 0x0000ff, 0xffff00 ],
+    mesh   : null,
+};
+
+
+window.addEventListener( 'load', async _=>{
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Setup
+    App.sphericalLook( 0, 20, 10 );
+    Debug       = await useVisualDebug( App );
+    Ref.caster  = new RayCaster( App.camera, App.renderer ).setPointLimit( 0.1 );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const dense = 1000;
+    const mat   = new THREE.PointsMaterial( { size:0.001, vertexColors: true  } );
+
+    const geo0  = geoBuffer( randomPointGeometry( dense, [0,0,0], [1,1,1] ) );
+    const mesh0 = new THREE.Points( geo0, mat );
+    App.scene.add( mesh0 );
+
+    const geo2  = geoBuffer( randomPointGeometry( dense, [-1,0,1], [0,1,0] ) );
+    const mesh2 = new THREE.Points( geo2, mat );
+    App.scene.add( mesh2 );
+
+    const geo1  = geoBuffer( randomPointGeometry( dense, [-1,1,0], [0,2,1] ) );
+    const mesh1 = new THREE.Points( geo1, mat );
+    App.scene.add( mesh1 );
+
+    const geo3  = geoBuffer( randomPointGeometry( dense, [0,1,0], [1,2,1] ) );
+    const mesh3 = new THREE.Points( geo3, mat );
+    App.scene.add( mesh3 );
+
+    Ref.meshes = [ mesh0, mesh1, mesh2, mesh3 ];
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const color = 0x707070;
+    const lines = new DynLineMesh();
+    lines.box( [0,0,0], [1,1,1], color );
+    lines.box( [-1,0,1], [0,1,0], color );
+    lines.box( [-1,1,0], [0,2,1], color );
+    lines.box( [0,1,0], [1,2,1], color );
+    App.scene.add( lines );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const cloner = m=>{
+        const mm = m.clone();
+        mm.position.x += Ref.offset[0];
+        mm.position.y += Ref.offset[1];
+        mm.position.z += Ref.offset[2];
+        App.scene.add( mm );
+    }
+    
+    cloner( mesh0 );
+    cloner( mesh1 );
+    cloner( mesh2 );
+    cloner( mesh3 );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.renderLoop();
+    // App.createRenderLoop( onPreRender ).start();
+});
+
+App.renderer.domElement.addEventListener( 'mousedown', e=>{
+    if( !e.shiftKey ) return;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Reset Testing
+    const max   = 4;
+    if( Ref.points.length >= max ){
+        Ref.points.length = 0;
+    }
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const result = Ref.caster.fromMouseEvent( e ).inObjects( Ref.meshes );
+    // console.log( results );
+    if( result.length > 0 ){
+        Debug.reset();
+
+        // ----------------------------------
+        // Render the closest point found from ray cast
+        const p = result[0].point.toArray();
+        Ref.points.push( p );
+
+        debugRawPoints( Ref.points );
+
+        // ----------------------------------
+        // All points available, run process
+        if( Ref.points.length === max ){
+
+            // Reverse Testing
+            // Ref.points.reverse();
+            // Debug.reset();
+            // debugRawPoints( Ref.points );
+
+            // Simple Polygon Centroid + Normal Testing
+            // const pc = polyCentroid( Ref.points );
+            // const pn = polyNormal( Ref.points );
+
+            // ++++++++++++++++++++++
+            // Compute Best fit Plane
+            let [ pc, pn ] = polyBestFitPlane( Ref.points );
+            debugPlane( pc, pn );
+
+            // ++++++++++++++++++++++
+            // Snap all points to the plane
+            const pAligned = pointsToPlane( Ref.points, pc, pn );
+
+            // ++++++++++++++++++++++
+            // Align Plane's normal to face camera
+            cameraRealignNormal( pAligned, App.camera.position.toArray() );
+
+            debugRawPoints( pAligned, Ref.offset );
+            pc = polyCentroid( pAligned );
+            pn = polyNormal( pAligned );
+            debugPlane( pc, pn, Ref.offset );
+
+            // ++++++++++++++++++++++
+            // Transform points to be flat onto the XZ Plane
+            const [pXZ, tPos, tRot] = poly3Dto2D( pAligned );
+            
+            debugRawPoints( pXZ, Ref.offset2 );
+            pc = polyCentroid( pXZ );
+            pn = polyNormal( pXZ );
+            debugPlane( pc, pn, Ref.offset2 );
+
+            // ++++++++++++++++++++++
+            const mesh = polyToMesh( pXZ, tPos, tRot );
+
+            mesh.position.x += Ref.offset[ 0 ];
+            mesh.position.y += Ref.offset[ 1 ];
+            mesh.position.z += Ref.offset[ 2 ];
+
+            App.scene.add( mesh );
+
+            if( Ref.mesh ){
+                App.scene.remove( Ref.mesh );
+                Ref.mesh.geometry.dispose();
+            }
+
+            Ref.mesh = mesh;
+        }
+    }
+});
+
+
+// #region BUILD GEOMETRY
+function geoBuffer( props ){
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute( 'position', new THREE.BufferAttribute( props.vertices, 3 ) );
+
+    if( props.indices ) geo.setIndex( new THREE.BufferAttribute( props.indices, 1 ) );
+    if( props.normal )  geo.setAttribute( 'normal', new THREE.BufferAttribute( props.normal, 3 ) );
+    if( props.uv )      geo.setAttribute( 'uv', new THREE.BufferAttribute( props.uv, 2 ) );
+    if( props.color )   geo.setAttribute( 'color', new THREE.BufferAttribute( props.color, 3 ) );
+
+    return geo;
+}
+
+function randomPointGeometry( cnt, min, max ){
+    const vert  = new Float32Array( cnt * 3 );
+    const color = new Float32Array( cnt * 3 );
+    const c     = 0.6;
+    let   ii    = 0;
+    let   t;
+    
+    for( let i=0; i < cnt; i++ ){
+        t               = Math.random();
+        color[ ii ]     = c;
+        vert [ ii++ ]   = min[0] * (1-t) + max[0] * t;
+        
+        t               = Math.random();
+        color[ ii ]     = c;
+        vert [ ii++ ]   = min[1] * (1-t) + max[1] * t;
+        
+        t               = Math.random();
+        color[ ii ]     = c;
+        vert [ ii++ ]   = min[2] * (1-t) + max[2] * t;
+    }
+
+    return { vertices:vert, color };
+}
+// #endregion
+
+// #region RAY CASTER
+class RayCaster{
+    caster   = new THREE.Raycaster();
+    coord    = new THREE.Vector2();
+    viewSize = new THREE.Vector2();
+    camera   = null;
+    renderer = null;
+
+    constructor( camera, renderer ){
+        this.camera   = camera;
+        this.renderer = renderer;
+
+        // console.log( this.caster );
+    }
+
+    setPointLimit( v ){
+        this.caster.params.Points.threshold = v;
+        return this;
+    }
+
+    fromMouseEvent( e ){
+        // Compute NDC screen coordinate of mouse over canvas
+        this.renderer.getSize( this.viewSize );
+        this.coord.x =  ( e.clientX / this.viewSize.x ) * 2 - 1;
+        this.coord.y = -( e.clientY / this.viewSize.y ) * 2 + 1;
+        this.caster.setFromCamera( this.coord, this.camera );
+        return this;
+    }
+
+    getLine(){
+        const scl = this.camera.far - this.camera.near;
+        const a   = this.caster.ray.origin.toArray();
+        const b   = this.caster.ray.direction.toArray();
+        b[0]     *= scl;
+        b[1]     *= scl;
+        b[2]     *= scl;
+        return [a,b];
+    }
+
+    inObjects( ary, checkChildren=false ){
+        return this.caster.intersectObjects( ary, checkChildren );
+    }
+}
+// #endregion
+
+// #region DEBUG
+
+function debugRawPoints( pnts, offset=[0,0,0] ){
+    const len  = pnts.length;
+    const cmax = Ref.colors.length;
+    const a    = [0,0,0];
+    const b    = [0,0,0];
+
+    for( let i=0; i < len; i++ ){
+        // Draw Points
+        vec3.add( a, pnts[i], offset );
+        Debug.pnt.add( a, Ref.colors[ i % cmax ], 3, 1 );
+        
+        // Draw Lines
+        const ii = i-1;
+        if( ii >= 0 ){
+            vec3.add( b, pnts[ii], offset );
+            Debug.ln.add( b, a, Ref.colors[ ii % cmax ], Ref.colors[ i % cmax ] );
+        }
+    }
+}
+
+function debugPlane( pc, pn, offset=[0,0,0] ){
+    const a = vec3.add( [], pc, offset );
+    const b = vec3.scaleAndAdd( [], a, pn, 1 );
+    Debug.pnt.add( a, 0xffffff, 4, 0 );
+    Debug.ln.add( a, b, 0xffffff );
+}
+
+// #endregion
+
+// #region MATHS
+function quat_fromAxes( xAxis, yAxis, zAxis, out=[0,0,0,1] ){
+    const m00 = xAxis[0], m01 = xAxis[1], m02 = xAxis[2],
+          m10 = yAxis[0], m11 = yAxis[1], m12 = yAxis[2],
+          m20 = zAxis[0], m21 = zAxis[1], m22 = zAxis[2],
+          t   = m00 + m11 + m22;
+
+    let x, y, z, w, s;
+
+    if(t > 0.0){
+        s = Math.sqrt(t + 1.0);
+        w = s * 0.5 ; // |w| >= 0.5
+        s = 0.5 / s;
+        x = (m12 - m21) * s;
+        y = (m20 - m02) * s;
+        z = (m01 - m10) * s;
+    }else if((m00 >= m11) && (m00 >= m22)){
+        s = Math.sqrt(1.0 + m00 - m11 - m22);
+        x = 0.5 * s;// |x| >= 0.5
+        s = 0.5 / s;
+        y = (m01 + m10) * s;
+        z = (m02 + m20) * s;
+        w = (m12 - m21) * s;
+    }else if(m11 > m22){
+        s = Math.sqrt(1.0 + m11 - m00 - m22);
+        y = 0.5 * s; // |y| >= 0.5
+        s = 0.5 / s;
+        x = (m10 + m01) * s;
+        z = (m21 + m12) * s;
+        w = (m20 - m02) * s;
+    }else{
+        s = Math.sqrt(1.0 + m22 - m00 - m11);
+        z = 0.5 * s; // |z| >= 0.5
+        s = 0.5 / s;
+        x = (m20 + m02) * s;
+        y = (m21 + m12) * s;
+        w = (m01 - m10) * s;
+    }
+
+    out[ 0 ] = x;
+    out[ 1 ] = y;
+    out[ 2 ] = z;
+    out[ 3 ] = w;
+    return out;
+}
+
+function triNorm( a, b, c ){
+    // AB = B - A, AC = C - A
+    const ax = b[0] - a[0], ay = b[1] - a[1], az = b[2] - a[2],
+          bx = c[0] - a[0], by = c[1] - a[1], bz = c[2] - a[2];
+
+    // Cross Product
+    let x = ay * bz - az * by;
+    let y = az * bx - ax * bz;
+    let z = ax * by - ay * bx;
+
+    // Normalizing
+    const mag = Math.sqrt( x**2 + y**2 + z**2 );
+    x /= mag;
+    y /= mag;
+    z /= mag;
+
+    return [ x, y, z ];
+}
+
+// #endregion
+
+// #region POLYGON STUFF
+
+// function snapPointToPlane( pnt, planePos, planeNorm, out = null ){
+//   // Dot Product between pnt vector & normal
+//   const dot =
+//     (pnt[0] - planePos[0]) * planeNorm[0] +
+//     (pnt[1] - planePos[1]) * planeNorm[1] +
+//     (pnt[2] - planePos[2]) * planeNorm[2];
+
+//   // Snap point to plane
+//   const rtn = out || pnt;
+//   rtn[0] = pnt[0] - dot * planeNorm[0];
+//   rtn[1] = pnt[1] - dot * planeNorm[1];
+//   rtn[2] = pnt[2] - dot * planeNorm[2];
+//   return rtn;
+// }
+
+
+function pointsToPlane( pnts, planePos, planeNorm ){
+    const rtn = [];
+    let dot;
+
+    for( const p of pnts ){
+        dot =
+            ( p[0] - planePos[0] ) * planeNorm[0] +
+            ( p[1] - planePos[1] ) * planeNorm[1] +
+            ( p[2] - planePos[2] ) * planeNorm[2];
+
+        rtn.push([
+            p[0] - dot * planeNorm[0],
+            p[1] - dot * planeNorm[1],
+            p[2] - dot * planeNorm[2],
+        ]);    
+    }
+
+    return rtn;
+}
+
+
+function polyCentroid( pnts ){
+    const rtn = [0,0,0];
+
+    // Add up points
+    for( const p of pnts ){
+        rtn[0] += p[0];
+        rtn[1] += p[1];
+        rtn[2] += p[2];
+    }
+
+    // Average out centroid
+    rtn[0] /= pnts.length;
+    rtn[1] /= pnts.length;
+    rtn[2] /= pnts.length;
+
+    return rtn;
+}
+
+
+function polyNormal( pnts ){
+    // Normal with Newell's method
+    const n = [0,0,0];
+    let i, ii, a, b;
+
+    for( i=0; i < pnts.length; i++ ){
+        ii = ( i+1 ) % pnts.length;
+        a  = pnts[ i ];
+        b  = pnts[ ii ];
+        
+        n[0] += ( a[1] - b[1] ) * ( a[2] + b[2] );
+        n[1] += ( a[2] - b[2] ) * ( a[0] + b[0] );
+        n[2] += ( a[0] - b[0] ) * ( a[1] + b[1] );
+    }
+    
+    // Normalize
+    const mag = Math.sqrt( n[0]**2 + n[1]**2 + n[2]**2 );
+    n[0] /= mag;
+    n[1] /= mag;
+    n[2] /= mag;
+
+    return n;
+}
+
+
+function cameraRealignNormal( pnts, camPos ){
+    const pc    = polyCentroid( pnts );
+    const pn    = polyNormal( pnts );
+    const toCam = vec3.sub( [], camPos, pc );
+
+    if( vec3.dot( pn, toCam ) < 0 ){
+        console.log( 'REALIGN TO CAMERA VIEW' );
+        pnts.reverse();
+    }
+}
+
+
+function poly3Dto2D( pnts ){
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const pc = polyCentroid( pnts );
+    const pn = polyNormal( pnts );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const fwd = [0,-1,0]; // WebGL DOWN
+    if( vec3.dot( pn, fwd ) > 0.999 ){
+        fwd[0] = 0;     // WebGL FORWARD
+        fwd[1] = 0;
+        fwd[2] = 1;
+    }
+
+    const lft = vec3.cross( [0,0,0], pn, fwd );
+    vec3.cross( fwd, lft, pn );
+    vec3.normalize( fwd, fwd );
+    vec3.normalize( lft, lft );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Create rotation based on the plane's normal direction
+    const rot = quat_fromAxes( lft, pn, fwd );
+    quat.normalize( rot, rot );
+
+    // Invert rotation to align points to XZ Plane
+    const irot = quat.invert( [], rot );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const rtn = [];
+
+    for( const p of pnts ){
+        const pp = vec3.sub( [0,0,0], p, pc );  // Localize to centroid
+        vec3.transformQuat( pp, pp, irot );     // Apply inverse rotation
+
+        pp[ 1 ] = 0;                            // Should be VERY near zero, snap it to zero
+        rtn.push( pp );
+    }
+
+    return [ rtn, pc, rot ];
+
+    /*
+    // TODO, Test N against UP
+    const fwd = [0,1,0];
+    const lft = vec3.cross( [0,0,0], n, fwd );
+    vec3.cross( fwd, lft, n );
+    vec3.normalize( fwd, fwd );
+    vec3.normalize( lft, lft );
+
+    const rot = quat_fromAxes( lft, n, fwd );
+    quat.normalize( rot, rot );
+
+    const irot = quat.invert( [], rot );
+
+    console.log( irot );
+
+    Debug.ln.add( c, vec3.scaleAndAdd( [], c, lft, 1 ), 0xffff00 );
+    Debug.ln.add( c, vec3.scaleAndAdd( [], c, fwd, 1 ), 0xff0000 ); // Forward
+    
+    const colors = [ 0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0x00ffff, 0xff00ff, 0xffffff ];
+    let i = 0;
+    const rtn = [];
+
+    // pnts.reverse();
+
+    for( const p of pnts ){
+        const pp = vec3.sub( [], p, c );
+        vec3.transformQuat( pp, pp, irot );
+        pp[1] = 0; // Should be VERY near zero, snap it to zero
+        rtn.push( pp );
+        Debug.pnt.add( pp, 0xff00ff, 3, 0 );
+        
+
+        if( i > 0 ){
+            Debug.ln.add( rtn[i-1], rtn[i], colors[i-1] );
+        }
+
+        i++;
+    }
+
+    const nn = normNewellMethod( rtn );
+    nn[0] *= 5;
+    nn[1] *= 5;
+    nn[2] *= 5;
+    console.log( nn );
+    Debug.ln.add( [0,0,0], nn, 0xffff00 );
+
+    return [ rtn, rot ];
+    */
+}
+
+function polyToMesh( pnts, tPos, tRot ){
+    // -------------------------------------
+    // Flatten data for GPU Buffer useage & 2D Triangulation
+    const flat2D = new Float32Array( pnts.length * 2 );
+    const flat3D = new Float32Array( pnts.length * 3 );
+    let i2 = 0;
+    let i3 = 0;
+    for( const p of pnts ){
+        flat2D[ i2++ ] = p[0];
+        flat2D[ i2++ ] = p[2];
+        flat3D[ i3++ ] = p[0];
+        flat3D[ i3++ ] = p[1];
+        flat3D[ i3++ ] = p[2];
+    }
+
+    // -------------------------------------
+    // Earcut Triangulation
+    const ind = earcut( flat2D, null, 2 );
+
+    // Test if triangle normal is correct which should have a CCW winding
+    const tn  = triNorm( pnts[ ind[0] ], pnts[ ind[1] ], pnts[ ind[2] ] );
+    if( vec3.dot( tn, [0,1,0] ) < 0 ){
+        // Reverse the winding of all the triangles from CW to CWW
+        // For each triangle swop the end indices : A-B-C to C-B-A
+        let t;
+        for( let i=0; i < ind.length; i+=3 ){
+            t          = ind[ i ];
+            ind[ i ]   = ind[ i+2 ];
+            ind[ i+2 ] = t;
+        }
+    }
+
+    // -------------------------------------
+    // Create mesh
+    const geo  = geoBuffer( { vertices:flat3D, indices: new Uint16Array( ind ) } );
+    const mesh = new THREE.Mesh( geo, new THREE.MeshBasicMaterial( {color:0x707070} ) );
+
+    mesh.position.fromArray( tPos );
+    mesh.quaternion.fromArray( tRot );
+
+    return mesh;
+
+    // const flat2D = [];
+    // const flat3D = [];
+    // for( const p of pnts ){
+    //     flat2D.push( p[0], p[2] );
+    //     flat3D.push( p[0], p[1], p[2] );
+    // }
+
+    // const indices = earcut( flat2D, null, 2 );
+
+    // // -------------------------------------
+    // // Reverse the triangle windings if not pointing up
+    // const nn = triNorm( pnts[ indices[0] ], pnts[ indices[1] ], pnts[ indices[2] ] );
+    // if( vec3.dot( nn, [0,1,0] ) < 0 ){
+    //     console.log( 'MEH' );
+
+    //     let t;
+    //     for( let i=0; i < indices.length; i+=3 ){
+    //         t              = indices[ i ];
+    //         indices[ i ]   = indices[ i+2 ];
+    //         indices[ i+2 ] = t;
+    //     }
+    // }
+
+    // // nn[0] *= 5;
+    // // nn[1] *= 5;
+    // // nn[2] *= 5;
+    // // console.log( nn );
+    // // Debug.ln.add( [0,0,0], nn, 0xffff00 );
+
+    // // -------------------------------------
+    // const geo  = geoBuffer( { vertices:new Float32Array(flat3D), indices: new Uint16Array( indices ) } );
+    // const mesh = new THREE.Mesh( geo, new THREE.MeshBasicMaterial( {color:0x00ff00} ) );
+    // App.scene.add( mesh );
+
+    // return mesh;
+}
+
+
+// NOTES !!!!
+// Try out this plane fitting algo 
+// https://zalo.github.io/blog/line-fitting/
+
+// https://www.ilikebigbits.com/2017_09_25_plane_from_points_2.html
+// Fit a plane to a collection of points.
+// Fast, and accurate to within a few degrees.
+// Returns None if the points do not span a plane.
+// So the new method is:
+// - Calculate the centroid of the points
+// - Calculate the covariance matrix of the points relative to the centroid
+// - Do linear regression along the X, Y and Z axis
+// - Weight the result of the linear regressions based on the square of the determinant
+function polyBestFitPlane( pnts ){
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const len = pnts.length;
+    if( len < 3 ) return null; // At least three points required
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Compute Centroid
+    const cent = [0,0,0];
+    for( const p of pnts ){
+        cent[0] += p[0];
+        cent[1] += p[1];
+        cent[2] += p[2];
+    }
+
+    cent[0] /= len;
+    cent[1] /= len;
+    cent[2] /= len;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Calculate full 3x3 covariance matrix, excluding symmetries:
+    let xx = 0.0; let xy = 0.0; let xz = 0.0;
+    let yy = 0.0; let yz = 0.0; let zz = 0.0;
+    let rx, ry, rz; 
+    
+    for( const p of pnts ){
+        rx  = p[0] - cent[0];
+        ry  = p[1] - cent[1];
+        rz  = p[2] - cent[2];
+        xx += rx * rx;
+        xy += rx * ry;
+        xz += rx * rz;
+        yy += ry * ry;
+        yz += ry * rz;
+        zz += rz * rz;
+    }
+
+    xx /= len;
+    xy /= len;
+    xz /= len;
+    yy /= len;
+    yz /= len;
+    zz /= len;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Do linear regression along the X, Y and Z axis
+    // Weight the result of the linear regressions based on the square of the determinant
+    let norm = [0,0,0];
+    let axis = [0,0,0];
+    let wgt  = 0;
+    let det  = 0;
+    
+    // -------------------------
+    // X
+    det     = yy * zz - yz * yz;
+    wgt     = det * det;
+    axis[0] = det;
+    axis[1] = xz * yz - xy * zz;
+    axis[2] = xy * yz - xz * yy;
+    
+    if( vec3.dot( norm, axis ) < 0.0 ) wgt = -wgt;
+    norm[0] += axis[0] * wgt;
+    norm[1] += axis[1] * wgt;
+    norm[2] += axis[2] * wgt;
+        
+    // -------------------------
+    // Y
+    det     = xx*zz - xz*xz;
+    wgt     = det * det;
+    axis[0] = xz*yz - xy*zz;
+    axis[1] = det;
+    axis[2] = xy*xz - yz*xx;
+
+    if( vec3.dot( norm, axis ) < 0.0 ) wgt = -wgt;
+    norm[0] += axis[0] * wgt;
+    norm[1] += axis[1] * wgt;
+    norm[2] += axis[2] * wgt;
+
+    // -------------------------
+    // Z
+    det     = xx*yy - xy*xy;
+    wgt     = det * det;
+    axis[0] = xy*yz - xz*yy;
+    axis[1] = xy*xz - yz*xx;
+    axis[2] = det;
+
+    if( vec3.dot( norm, axis ) < 0.0 ) wgt = -wgt;
+    norm[0] += axis[0] * wgt;
+    norm[1] += axis[1] * wgt;
+    norm[2] += axis[2] * wgt;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Normalize
+    const mag = Math.sqrt( norm[0]**2 + norm[1]**2 + norm[2]**2 );
+    norm[0] /= mag;
+    norm[1] /= mag;
+    norm[2] /= mag;
+
+    // Is a Number, Not Infinity +-, not NaN
+    if( Number.isFinite(norm[0]) && Number.isFinite(norm[1]) && Number.isFinite(norm[2]) ){
+        return [ cent, norm ];
+    }else{
+        return null;
+    }
+}
+// #endregion
+
+</script>
+<style>
+    .container{ position:fixed; padding:6px 8px; font-family:monospace; font-size:13px;
+        color:white; background-color:rgba( 1.0, 1.0, 1.0, 0.3 ); }
+</style>
+
+<div class="container">
+    <div>SHIFT + CLick : Add Point</div>
+    <div>CLRL + Click : Pan Movement</div>
+    <br>
+    <div>Process run on every 4 points</div>
+</div>
+</body></html>

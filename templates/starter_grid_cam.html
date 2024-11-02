@@ -1,0 +1,395 @@
+<!DOCTYPE html><html><head><title></title></head><body><script src="/import-map.js"></script><script type="module">
+import Starter, { THREE }   from '../lib/Starter.js';
+import facedCube 			from '../lib/meshes/FacedCube.js';
+import { UtilGltf2, Gltf2 } from '../lib/loaders/UtilGltf2.js';
+
+// #region MAIN
+let App;
+let Ref = {};
+
+window.addEventListener( "load", async _=>{
+	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	App = new Starter( { webgl2:false, grid:true } );
+	App.setCamera( 45, 20, 6 ).render();
+
+    /**/
+    App.orbit.enabled = false;
+
+    const size  =  App.getRendererSize();
+    let ratio   = size[0] / size[1];
+    let orth    = 5;
+    let height  = orth * 0.5;
+    let width   = orth * ratio / 2;
+
+    App.camera = new THREE.OrthographicCamera( -width, width, height, -height, -10, 2000 );
+    App.camera.rotation.reorder( 'YXZ' );
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // App.add( facedCube() );
+
+    const gltf = await Gltf2.fetch( '../../assets/suzanne/suzanne_hpoly.gltf' );
+    const mat  = new THREE.MeshPhongMaterial( { color:0x00ffff } );
+    const mesh = UtilGltf2.loadMesh( gltf, null, mat );
+    mesh.rotation.x = -45 * Math.PI / 180;
+    mesh.rotation.z = -45 * Math.PI / 180;
+    App.add( mesh );
+
+
+    Ref.view = new GridView().init( App.camera, App.renderer );
+    App.add( Ref.view.mesh );
+
+    Ref.view.toAxis( 2 );
+
+    setupUI();
+});
+
+window.addEventListener( 'keydown', e=>{
+    switch( e.keyCode ){
+        case 88: Ref.view.toAxis( e.altKey ? 3 : 0 ); break; // X
+        case 89: Ref.view.toAxis( e.altKey ? 4 : 1 ); break; // Y
+        case 90: Ref.view.toAxis( e.altKey ? 5 : 2 ); break; // Z
+    }
+});
+
+function setupUI(){
+    document.getElementById( 'btnCenter' ).addEventListener( 'click', e=>{
+        console.log( 'center' );
+    });
+}
+
+// #endregion
+
+import CanvasPointerHandlers    from '../lib/camera/CanvasPointerHandlers.js';
+import gridCube 			    from '../lib/meshes/GridCube.js';
+import { vec3, vec2, vec4, quat }           from 'gl-matrix';
+
+import { 
+    screenPanStepInc
+} from '../lib/camera/CameraMovements.js';
+
+// Shift + Right Click Drive - Rotate camera + cube
+// Right Click Drag - move Camera + Cube
+// Right Left Drag - Move Camera
+
+function angle( a, b ){
+    return Math.atan2( b[1] * a[0] - b[0] * a[1],  b[0] * a[0] + b[1] * a[1] );
+}
+
+// function planeProj( v, planeNorm, planePos ){
+//     const planeConst    = -Vec3.dot( planePos, planeNorm );
+//     const scl           = Vec3.dot( planeNorm, v ) + planeConst;
+//     this.fromScale( planeNorm, -scl ).add( v );
+// }
+
+class GridView{
+    // #region MAIN
+    mesh        = gridCube();
+    camera      = this;
+    renderer    = this;
+    axis        = AXES.FRONT;
+
+    // camPositions = [
+    //     [0,0,0],    // +X
+    //     [0,0,0],    // +Y
+    //     [0,0,0],    // +Z
+    //     [0,0,0],    // -X
+    //     [0,0,0],    // -Y
+    //     [0,0,0],    // -Z
+    // ];
+
+    stepScale   = 2.0;
+    targetPos   = [0,0,0];
+
+    initGridRot = [0,0,0,1];
+    initGridPos = [0,0,0];
+    initCamPos  = [0,0,0];    // Cache camera position
+    initCamRot  = [0,0,0,1];  // Cache camera rotation
+    initBtn     = 0;
+    
+    constructor(){
+        this.mesh.scale.setScalar( 100 );
+    }
+
+    init( camera, renderer ){
+        this.canvas   = renderer.domElement;
+        this.renderer = renderer;
+        this.camera   = camera;
+
+        // Setup Mouse Events
+        this.mouseHandler = new CanvasPointerHandlers( this.canvas ).enable()
+        this.mouseHandler.onPointerWheel = this.onPointerWheel;
+        this.mouseHandler.onPointerDown  = this.onPointerDown;
+        this.mouseHandler.onPointerMove  = this.onPointerMove;
+
+        return this;
+    }
+    // #endregion
+
+    // #region METHODS
+
+    toAxis( i ){
+        this.axis  = i;
+        const gridRot  = this.getGridRot();
+        const dir  = vec3.transformQuat( [0,0,0], AXES.DIR[ i ], gridRot );
+
+
+        const li   = ( i + 3 ) % 6; // Index to look in opposite direction
+        const dist = vec3.dist( this.getCameraPos(), this.targetPos );
+        const pos  = vec3.scaleAndAdd( [0,0,0], this.targetPos, dir, dist );
+
+        // Move camera to the Axis direction of target
+        // but rotate look at the opposite direction.
+        // For example, placing camera Right of target but looking Left.
+        this.camera.position.fromArray( pos );
+        // this.camera.quaternion.fromArray( AXES.LOOK[ li ] );
+
+        const q = [0,0,0,1];
+
+        // if( vec4.dot( gridRot, AXES.LOOK[ li ] ) > 0 ){
+            quat.mul( q,  gridRot, AXES.LOOK[ li ] );
+        // }else{
+        //     const tmp = AXES.LOOK[ li ].slice();
+        //     tmp[0] *= -1;
+        //     tmp[1] *= -1;
+        //     tmp[2] *= -1;
+        //     quat.mul( q, gridRot, tmp );
+        // }
+
+        quat.normalize( q, q );
+        this.camera.quaternion.fromArray( q );
+
+        // console.log( pos, dist, this.targetPos );
+        return this
+    }
+    // #endregion
+
+    // #region CAMERA CONTROLS
+    stepScreenPan( dx, dy, lockGrid=false ){
+        let x = 0;
+        let y = 0;
+        if( !this.camera.isOrthographicCamera ){
+            const scl = this.getProjDistScale( );
+            x = dx * this.stepScale * scl;
+            y = dy * this.stepScale * scl;
+        }else{
+            x = dx * this.getOrthoWScale();
+            y = dy * this.getOrthoHScale();
+        }
+
+        const [ rit, up ] = screenPanStepInc( this.camera, x, y );
+        let pos = [0,0,0];
+        
+        if( lockGrid ){
+            vec3.add( pos, this.initGridPos, rit );
+            vec3.add( pos, pos, up );
+            this.mesh.position.fromArray( pos );
+        }
+
+        vec3.add( pos, this.initCamPos, rit );
+        vec3.add( pos, pos, up );
+        this.camera.position.fromArray( pos );
+
+        vec3.add( pos, this.initTarPos, rit );
+        vec3.add( this.targetPos, pos, up ); 
+    }
+    
+    rotatePlane( rad, camRot=[0,0,0,1], gridRot=[0,0,0,1], camPos=null, tarPos=null ){
+        const axis  = vec3.transformQuat( [0,0,0], [0,0,1], camRot );
+        const rot   = quat.setAxisAngle( [0,0,0,1], axis, rad );
+        const q     = quat.mul( [0,0,0,1], rot, gridRot );
+        quat.normalize( q, q );
+        this.mesh.quaternion.fromArray( q );
+
+        // -------------------------------
+        // Rotate camera in relation to the grid
+        // Need to use the grid's position as the 
+        // pivot point for rotating the camera.
+        const gridDist = [0,0,0];
+        const gridPos  = this.getGridPos();
+
+        camPos = camPos || this.getCameraPos();
+        vec3.sub( gridDist, camPos, gridPos );          // Get distance from pivot
+
+        vec3.transformQuat( gridDist, gridDist, rot );  // Rotate distance
+        vec3.add( gridPos, gridPos, gridDist );         // Add rotated distance back to pivot
+        this.camera.position.fromArray( gridPos );
+
+        // Apply same rotation to targetPos;
+        tarPos = tarPos || this.targetPos.slice();
+        vec3.sub( gridDist, tarPos, gridPos );
+
+        vec3.transformQuat( gridDist, gridDist, rot );  // Rotate distance
+        vec3.add( this.targetPos, tarPos, gridDist );   // Add rotated distance back to pivot
+
+        // -------------------------------
+        // Align Camera to Grid's Face
+        const li = ( this.axis + 3 ) % 6; // Index to look in opposite direction
+        quat.mul( q,  q , AXES.LOOK[ li ] );
+        this.camera.quaternion.fromArray( q );
+
+    }
+
+    getAngle( aPos, bPos ){
+        const center = [
+            this.canvas.clientWidth  * 0.5,
+            this.canvas.clientHeight * 0.5,
+        ];
+
+        const a = vec2.sub( [0,0], aPos, center );
+        const b = vec2.sub( [0,0], bPos, center );
+
+        return Math.atan2( 
+            b[1] * a[0] - b[0] * a[1],
+            b[0] * a[0] + b[1] * a[1],
+        );
+    }
+    
+    // #endregion
+
+    // #region HELPERS
+    getCameraPos(){ return this.camera.position.toArray(); }
+    getCameraRot(){ return this.camera.quaternion.toArray(); }
+
+    getGridPos(){ return this.mesh.position.toArray(); }
+    getGridRot(){ return this.mesh.quaternion.toArray(); }
+
+    getProjDistScale( startPos=null ){
+        // Camera distance / Focal Length / Viewport Height
+        return  vec3.dist( this.getCameraPos(), [0,0,0] ) * 
+                Math.tan( ( this.camera.getEffectiveFOV() * 0.5 ) * 0.01745329251 ) /
+                this.canvas.clientHeight;
+    }
+
+    getOrthoHScale(){
+        const c = this.camera;
+        return ( c.top - c.bottom ) / c.zoom / this.canvas.clientHeight
+    }
+
+    getOrthoWScale(){
+        const c = this.camera;
+        return ( c.right - c.left ) / c.zoom / this.canvas.clientWidth;
+    }
+    // #endregion
+
+    // #region MOUSE HANDLERS
+    onPointerWheel = ( e, dx, dy )=>{
+        // // Kind of a hack, not 100% sure that mouse wheels will
+        // // always generate a deltaY value of 100 or -100. When testing
+        // // with two fingers the deltas seem to be less then 60 so this 
+        // // might be a good way to dell the different between mouse or trackpad use.
+        // const isMouse = ( Math.abs( dy ) > 99 ); 
+
+        // if( isMouse || e.ctrlKey ){
+        //      // Browser auto sets ctrlKey true if its a Pinch to Zoom Gesture
+        //     const tick = Math.sign( dy );
+        //     const d    = vec3.dist( this.getCameraPos(), this.targetPos );
+        //     const scl  = ( isMouse )? this.zoomScale : this.pinchScale;
+
+        //     // Issue, when using pinch gesture, SHIFT and ALT keys won't work
+        //     // So there is no way to augment pinch gestures.
+        //     if( e.shiftKey ){
+        //         // Vertical Movement
+        //         this.stepY( tick * this.yStep );
+        //     }else{
+        //         // Zoom Movement
+        //         if( !this.camera.isOrthographicCamera ){
+        //             this.setTargetDistance( ( tick === -1 )? d * scl : d / scl );
+        //         }else{
+        //             const c =  this.camera;
+        //             const z = ( dy < 0 )? c.zoom / scl : c.zoom * scl;
+        //             c.zoom = Math.max( 0.000001, z );
+        //             c.updateProjectionMatrix();
+        //         }
+        //     }   
+        // }else{
+        //     if( e.shiftKey ){
+        //         // If shift, move the target instead of orbiting it
+        //         this.stepXZ( dx, -dy );
+        //     }else{
+        //         // With two fingers on the trackpad will trigger a Wheel event,
+        //         // can take this chance to use it as a way to control the camera orbit
+        //         // instead of zoom.
+        //         this.stepOrbit( dx, -dy, this.touchpadOrbitScale, this.touchpadOrbitScale );
+        //     }
+        // }
+    }; 
+    
+    onPointerDown  = ( e, coord )=>{
+        this.initTarPos    = this.targetPos.slice();
+        this.initCamPos    = this.getCameraPos();
+        this.initCamRot    = this.getCameraRot();
+        this.initGridPos   = this.mesh.position.toArray();
+        this.initGridRot   = this.mesh.quaternion.toArray();
+        this.initBtn       = e.button; // Can't get button number during pointer_move, save it on down
+        return true;
+    };
+
+    onPointerMove  = ( e, coord, delta, vel, initCoord )=>{
+        switch( this.initBtn ){
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            // LEFT CLICK
+            case 0:
+                if( e.shiftKey ){                  
+                    this.stepScreenPan( -delta[0], delta[1], true );
+                    // Move Camera, Grid and Target
+                }else if( e.ctrlKey ){
+                    this.rotatePlane( this.getAngle( initCoord, coord ), this.initCamRot, this.initGridRot, this.initCamPos, this.initTarPos );
+                    // this.toAxis( this.axis );
+                    
+                    // Rotates Grid
+                }else{
+                    this.stepScreenPan( -delta[0], delta[1], false );
+                    // Move Camera and Target
+                }
+
+        //         if( e.shiftKey ){
+        //             this.stepXZ( -delta[0], delta[1], this.initTarget );
+        //         }else{
+        //             // Orbit around the target
+        //             this.stepOrbit( -delta[0], delta[1], 2.0, 1.0, this.initPos );
+        //         }
+                break;
+
+            // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            // RIGHT CLICK
+            case 2:
+        //         this.stepScreenPan( -delta[0], delta[1], this.initTarget );
+                break;
+        }
+    };
+    // #endregion
+}
+
+const AXES = {
+    RIGHT  : 0,
+    TOP    : 1,
+    FRONT  : 2,
+    LEFT   : 3,
+    BOTTOM : 4,
+    BACK   : 5,
+
+    DIR  : [
+        [1,0,0],
+        [0,1,0],
+        [0,0,1],
+        [-1,0,0],
+        [0,-1,0],
+        [0,0,-1],
+    ],
+
+    LOOK : [
+        [0,-0.7071067811865475,0,0.7071067811865475],
+        [0.7071067811865475,0,0,0.7071067811865475],
+        [0,-1,0,0],
+        [0,0.7071067811865475,0,0.7071067811865475],
+        [-0.7071067811865475,0,0,0.7071067811865475],
+        [0,0,0,1],
+    ],
+}
+</script>
+
+<div style="position:fixed; left:10px; bottom:10px;">
+    <button id="btnCenter">Center</button>
+</div>
+
+</body></html>

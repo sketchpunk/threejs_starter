@@ -1,0 +1,263 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title></title></head>
+<style>canvas{ display:block; } body, html { padding:0px; margin:0px; width:100%; height:100%; }</style>
+<body><script src="/import-map.js"></script><script type="module">
+import useThreeWebGL2, { THREE, useDarkScene, useVisualDebug } from '../lib/useThreeWebGL2.js';
+
+// #region MAIN
+let Debug;
+let App   = useDarkScene( useThreeWebGL2( ) );
+let Ref   = {};
+
+/*
+[[[NOTE]]]
+Threejs does not have any abstraction to run TransformFeedback
+plus any access to raw gl buffer references are privately scopes.
+To make this work you will need to modify the threejs library to
+expose just 1 collection.
+
+https://github.com/mrdoob/three.js/blob/master/src/renderers/WebGLRenderer.js#L325C12-L325C25
+In the initGLContext() method inside the WebGLRenderer, just need to
+add the following line of code at the end of the method. This is enough
+to be able to grab the buffer references of geometry attributes.
+
+_this.attributes = attributes;
+
+*/
+
+window.addEventListener( 'load', async _=>{
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Setup
+    App.sphericalLook( 0, 20, 15 );
+    // Debug = await useVisualDebug( App );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    const geo = geoBuffer({ 
+        vertices : new Float32Array( [0,0.5,0,  0,0,0] ), 
+        color    : new Float32Array( [0,1,0,  0,0,1 ] ), 
+    });
+
+    const mat  = new THREE.PointsMaterial( { size:0.5, vertexColors: true  } );
+    const mesh = new THREE.Points( geo, mat );
+
+    App.scene.add( mesh );
+    App.render(); // MUST RENDER FIRST, else can not get GL Buffer References from Renderer
+
+    const { vao, tf } = createTF( App.renderer, geo );
+    const shader      = createShader( App.renderer );
+    const tex         = createDataTexture( App.renderer );
+    runTF( App.renderer, vao, tf, shader, tex );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    App.renderLoop();
+    // App.createRenderLoop( onPreRender ).start();
+});
+
+// #endregion
+
+function geoBuffer( props ){
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute( 'position', new THREE.BufferAttribute( props.vertices, 3 ) );
+
+    if( props.indices ) geo.setIndex( new THREE.BufferAttribute( props.indices, 1 ) );
+    if( props.normal )  geo.setAttribute( 'normal', new THREE.BufferAttribute( props.normal, 3 ) );
+    if( props.uv )      geo.setAttribute( 'uv', new THREE.BufferAttribute( props.uv, 2 ) );
+    if( props.color )   geo.setAttribute( 'color', new THREE.BufferAttribute( props.color, 3 ) );
+
+    return geo;
+}
+
+function runTF( renderer, vao, tf, shader, tex ){
+    const gl = renderer.getContext();
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Setup our state
+
+    // --------------------------
+    gl.bindVertexArray( vao );
+    gl.bindTransformFeedback( gl.TRANSFORM_FEEDBACK, tf );
+    gl.enable( gl.RASTERIZER_DISCARD ); // Disable fragment shader, its not needed
+
+    // --------------------------
+    gl.useProgram( shader.prog );
+    gl.uniform1f( shader.uScale, 1.7 );
+    gl.uniform1i( shader.uTex, 0 );         // Which slot for texture uniform to use
+    
+    gl.activeTexture( gl.TEXTURE0 );        // Activate Texture Slot
+    gl.bindTexture( gl.TEXTURE_2D, tex );   // Bind Texture    
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    gl.beginTransformFeedback( gl.POINTS );
+    gl.drawArrays( gl.POINTS, 0, 2 );   // Process 2 points
+    gl.endTransformFeedback()
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Cleanup our state
+    gl.bindTexture( gl.TEXTURE_2D, null );
+    gl.useProgram( null );
+    gl.bindVertexArray( null );
+    gl.bindTransformFeedback( gl.TRANSFORM_FEEDBACK, null );
+    gl.disable( gl.RASTERIZER_DISCARD );
+}
+
+function createTF( renderer, geo ){
+    const gl   = renderer.getContext();
+    
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const pBuf = renderer.attributes.get( geo.attributes.position );
+    const vao  = gl.createVertexArray();
+
+    gl.bindVertexArray( vao );                              // Activate VAO to bind buffers to it
+    gl.bindBuffer( gl.ARRAY_BUFFER, pBuf.buffer );          // Bind position buffer
+    gl.vertexAttribPointer( 0, 3, gl.FLOAT, false, 0, 0 );  // Setup as attribute @ LOC 0
+    gl.enableVertexAttribArray( 0 );                        // Turn onf attribute
+    gl.bindVertexArray( null );                             // must unbind vao first
+    gl.bindBuffer( gl.ARRAY_BUFFER, null );                 // then can unbind buffer
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    const cBuf = renderer.attributes.get( geo.attributes.color );
+    const tf   = gl.createTransformFeedback();
+
+    gl.bindTransformFeedback( gl.TRANSFORM_FEEDBACK, tf );              // Bind TF
+    gl.bindBufferBase( gl.TRANSFORM_FEEDBACK_BUFFER, 0, cBuf.buffer );  // Bind buffer as output @ LOC 0
+    gl.bindTransformFeedback( gl.TRANSFORM_FEEDBACK, null );            // Unbind TF.
+    
+    return { vao, tf };
+}
+
+function createShader( renderer ){
+    const gl   = renderer.getContext();
+    let status;
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Vertex Shader
+    const vshader = gl.createShader( gl.VERTEX_SHADER );
+    gl.shaderSource( vshader, V_SRC );
+    gl.compileShader( vshader );
+    status = gl.getShaderParameter( vshader, gl.COMPILE_STATUS );
+    if( !status ) console.log( 'VERTEX ERROR', gl.getShaderInfoLog( vshader ) );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Fragment Shader - NOT NEEDED for compute but needed for linking
+    const fshader = gl.createShader( gl.FRAGMENT_SHADER );
+    gl.shaderSource( fshader, F_SRC );
+    gl.compileShader( fshader );
+    status = gl.getShaderParameter( fshader, gl.COMPILE_STATUS );
+    if( !status ) console.log( 'FRAGMENT ERROR', gl.getShaderInfoLog( fshader ) );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Build final shader program
+    const prog = gl.createProgram();
+    gl.attachShader( prog, vshader );
+    gl.attachShader( prog, fshader );
+    gl.transformFeedbackVaryings( prog, [ 'color' ], gl.SEPARATE_ATTRIBS ); // Define shader TF outputs
+    gl.linkProgram( prog );
+
+    status = gl.getProgramParameter( prog, gl.LINK_STATUS );
+    if( !status ) console.log( 'LINK ERROR', gl.getProgramInfoLog( prog ) );
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // cleanup
+    gl.detachShader( prog, vshader );
+    gl.detachShader( prog, fshader );
+    gl.deleteShader( vshader );
+    gl.deleteShader( fshader );
+
+    const uScale = gl.getUniformLocation( prog, 'scale' );
+    const uTex   = gl.getUniformLocation( prog, 'tex' );
+
+    // https://webglfundamentals.org/webgl/lessons/webgl-shaders-and-glsl.html
+    // var offsetLoc = 
+    // gl.uniform4fv(offsetLoc, [1, 0, 0, 0]);  // offset it to the right half the screen
+
+    return { prog, uScale, uTex };
+}
+
+// https://webglfundamentals.org/webgl/lessons/webgl-data-textures.html
+// https://registry.khronos.org/webgl/specs/latest/2.0/#TEXTURE_TYPES_FORMATS_FROM_DOM_ELEMENTS_TABLE
+// https://developer.mozilla.org/en-US/docs/Web/API/WebGLRenderingContext/texImage2D
+function createDataTexture( renderer ){
+    const gl   = renderer.getContext();
+
+    const tex  = gl.createTexture();
+    gl.bindTexture( gl.TEXTURE_2D, tex );
+
+    // fill texture with 3x2 pixels
+    const internalFormat = gl.RGB32F; // RGB32F
+    const format         = gl.RGB;    // RGB
+    const type           = gl.FLOAT;  // FLOAT
+
+    const width  = 1;
+    const height = 2;
+    const data   = new Float32Array([
+        1, 1, 0,
+        0, 1, 1,
+    ]);
+
+    console.log( internalFormat, format, type, data );
+    
+    // set the filtering so we don't need mips and it's not filtered
+    gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST );
+    gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST );
+    gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE );
+    gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE );
+
+    gl.pixelStorei( gl.UNPACK_ALIGNMENT, 1 ); // Not using 4 Byte Aligned Data.. maybe
+    gl.texImage2D( gl.TEXTURE_2D, 0, internalFormat, width, height, 0,
+                    format, type, data );
+
+    gl.bindTexture( gl.TEXTURE_2D, null );
+
+    // gl.deleteTexture( tex );
+    // gl.texSubImage2D( gl.TEXTURE_2D, 0, 0, 0, gl.RGB, gl.FLOAT, data );
+
+    return tex;
+}
+
+const V_SRC = `#version 300 es
+precision highp float;
+
+layout(location=0) in vec3 position;
+
+uniform float scale;
+uniform sampler2D tex;
+
+out vec3 color;
+
+void main(){
+    vec3 px = texelFetch( tex, ivec2( 0, gl_VertexID ), 0 ).rgb;
+    color   = vec3( px * scale );
+}`;
+
+const F_SRC = `#version 300 es
+void main(){}`;
+
+// https://webglfundamentals.org/webgl/lessons/webgl-data-textures.html
+
+
+/*
+**DATA**
+- OBB
+  - vec3 xDir
+  - vec3 yDir
+  - vec3 zDir
+  - vec3 half lengths
+  - vec3 center
+  - vec3 color
+
+- Data Storage
+  - DataTexture
+  - Uniform Array
+  - Ubo ( 3JS doesnt support arrays in UBOs )
+
+**SOLUTIONS**
+- Tranformfeedback
+  - Call once per mesh on annotation update
+  - Input position, output color
+
+- Shader
+  - Update Vertex Shader
+  - Runs in every frame
+*/
+
+</script></body></html>
